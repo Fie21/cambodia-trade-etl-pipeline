@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Transport Data Warehouse (transport_dw)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "transport_dw",
+      "Username": "airflow",
+      "SSLMode": "prefer"
+    }
+  }
+}

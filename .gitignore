@@ -1,0 +1,39 @@
+# Data directories (keep folder structure via .gitkeep)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Environment variables & secrets
+.env
+*.env
+
+# Python & Jupyter caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ipynb_checkpoints/
+
+# macOS system files
+.DS_Store
+**/.DS_Store
+
+# Logs & Docker volumes
+logs/
+airflow_logs/
+pgdata/
+pgadmin_data/
+
+# Excluded Non-Core Assets (Proposals, Presentations, Notebooks)
+notebooks/
+docs/proposal/
+docs/presentation/
+mindmap/
+
+# IDE & Editor configs
+.agents/
+.idea/
+.vscode/
+
+
