@@ -35,9 +35,24 @@ def forecast_monthly_series(
     # Resample to strict month start
     series = data[value_col].resample("MS").sum().ffill().fillna(0)
 
-    
+    # Optional Pre-Fitting Outlier / Shock Smoothing (STL Residual Decomposition)
+    if len(series) >= 24:
+        try:
+            from statsmodels.tsa.seasonal import seasonal_decompose
+            decomp = seasonal_decompose(series, model="additive", period=12)
+            resid = decomp.resid
+            std_r = resid.std()
+            extreme_mask = np.abs(resid) > 2.5 * std_r
+            if extreme_mask.any():
+                cleaned_resid = resid.copy()
+                cleaned_resid[extreme_mask] = cleaned_resid.rolling(5, center=True, min_periods=1).median()[extreme_mask]
+                series = (decomp.trend + decomp.seasonal + cleaned_resid).bfill().ffill()
+        except Exception:
+            pass
+
     last_date = series.index[-1]
     future_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=horizon, freq="MS")
+
 
     forecast_values = np.zeros(horizon)
     se = np.std(series.values) * 0.15
