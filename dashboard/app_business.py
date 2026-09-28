@@ -130,11 +130,12 @@ f_country = df_country[(df_country["date"] >= start_dt) & (df_country["date"] <=
 f_sitc = df_sitc[(df_sitc["date"] >= start_dt) & (df_sitc["date"] <= end_dt)]
 f_hs = df_hs[(df_hs["date"] >= start_dt) & (df_hs["date"] <= end_dt)]
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🏛️ Macro & Trade Balance",
     "🚢 Freight & Transport Modes",
     "🌍 Bilateral Partner Countries",
     "📦 Commodity Sectors (SITC & HS)",
+    "🔮 Predictive Forecasting",
 ])
 
 with tab1:
@@ -243,3 +244,152 @@ with tab4:
         fig_hs = px.bar(hs_filtered, x=val_col, y="chapter_label", color="trade_type", orientation="h", barmode="group", title="Top HS Chapters")
         fig_hs.update_layout(yaxis={"categoryorder": "total ascending"}, height=500)
         st.plotly_chart(fig_hs, use_container_width=True)
+
+with tab5:
+    st.subheader("🔮 Predictive Time-Series Forecasting & Port Capacity Planning")
+    st.caption("Econometric exponential smoothing and Holt-Winters forecasting with calibrated 95% confidence intervals.")
+
+    fc_col1, fc_col2 = st.columns([1, 1])
+    with fc_col1:
+        target_series = st.selectbox(
+            "Forecast Target Metric",
+            [
+                "🌊 Maritime Port Cargo Throughput (Sea Transport - Metric Tons)",
+                "🚚 Cross-Border Road Freight Throughput (Road Transport - Metric Tons)",
+                "📈 National Merchandise Total Exports",
+                "📉 National Merchandise Total Imports",
+            ],
+            index=0,
+        )
+    with fc_col2:
+        forecast_horizon = st.slider("Forecast Lead Time Horizon (Months)", min_value=3, max_value=24, value=12, step=1)
+
+    # Build target dataset
+    try:
+        import sys
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+        from forecast import forecast_monthly_series
+
+        if "Maritime" in target_series:
+            sub_df = df_transport[df_transport["description"].str.contains("Sea|Marine|Port", case=False, na=False)]
+            sub_agg = sub_df.groupby("date")["net_weight_ton"].sum().reset_index().rename(columns={"net_weight_ton": "value"})
+            metric_label = "Maritime Cargo (Metric Tons)"
+            y_unit = "Metric Tons (t)"
+        elif "Road" in target_series:
+            sub_df = df_transport[df_transport["description"].str.contains("Road|Land", case=False, na=False)]
+            sub_agg = sub_df.groupby("date")["net_weight_ton"].sum().reset_index().rename(columns={"net_weight_ton": "value"})
+            metric_label = "Road Freight (Metric Tons)"
+            y_unit = "Metric Tons (t)"
+        elif "Exports" in target_series:
+            sub_df = df_country[df_country["trade_type"] == "Export"]
+            sub_agg = sub_df.groupby("date")[val_col].sum().reset_index().rename(columns={val_col: "value"})
+            metric_label = f"Total Exports ({currency})"
+            y_unit = f"{currency}"
+        else:
+            sub_df = df_country[df_country["trade_type"] == "Import"]
+            sub_agg = sub_df.groupby("date")[val_col].sum().reset_index().rename(columns={val_col: "value"})
+            metric_label = f"Total Imports ({currency})"
+            y_unit = f"{currency}"
+
+        hist_df, fc_df, fc_metrics = forecast_monthly_series(sub_agg, date_col="date", value_col="value", horizon=forecast_horizon)
+
+        # KPI Metrics
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Selected Model", fc_metrics["model_used"].split("(")[0].strip())
+        m2.metric(f"Projected {forecast_horizon}M Total", f"{fc_metrics['forecast_horizon_total']:,.0f} {y_unit.split()[0]}")
+        m3.metric("Projected Growth (YoY)", f"{fc_metrics['projected_growth_rate_pct']:+.1f}%")
+        m4.metric("Projected Peak Month", f"{fc_metrics['peak_month']}", f"{fc_metrics['peak_value']:,.0f}")
+
+        st.markdown("---")
+
+        # Interactive Forecast Plotly Chart
+        fig_fc = go.Figure()
+
+        # Historical Line
+        fig_fc.add_trace(go.Scatter(
+            x=hist_df["date"],
+            y=hist_df["actual"],
+            name="Historical Actuals",
+            mode="lines",
+            line=dict(color="#2980b9", width=2.5),
+        ))
+
+        # Upper 95% Bound
+        fig_fc.add_trace(go.Scatter(
+            x=fc_df["date"],
+            y=fc_df["upper_95"],
+            name="Upper 95% Confidence",
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+        # Lower 95% Bound with Shading
+        fig_fc.add_trace(go.Scatter(
+            x=fc_df["date"],
+            y=fc_df["lower_95"],
+            name="95% Prediction Interval",
+            mode="lines",
+            fill="tonexty",
+            fillcolor="rgba(243, 156, 18, 0.2)",
+            line=dict(width=0),
+        ))
+
+        # Forecast Line
+        fig_fc.add_trace(go.Scatter(
+            x=fc_df["date"],
+            y=fc_df["forecast"],
+            name=f"Forecast (Next {forecast_horizon}M)",
+            mode="lines+markers",
+            line=dict(color="#e67e22", width=3, dash="dash"),
+            marker=dict(size=6),
+        ))
+
+        # Add Capacity Benchmark for Sea Freight (e.g. Sihanoukville Port threshold)
+        if "Maritime" in target_series:
+            max_hist = hist_df["actual"].max()
+            cap_limit = max_hist * 1.25
+            fig_fc.add_hline(
+                y=cap_limit,
+                line_dash="dot",
+                line_color="#e74c3c",
+                annotation_text=f"Estimated Port Handling Benchmark Threshold ({cap_limit:,.0f} t)",
+                annotation_position="bottom right",
+            )
+
+        fig_fc.update_layout(
+            title=f"📈 Time-Series Forecast: {metric_label} ({hist_df['date'].min().strftime('%Y-%m')} to {fc_df['date'].max().strftime('%Y-%m')})",
+            xaxis_title="Month",
+            yaxis_title=y_unit,
+            hovermode="x unified",
+            height=520,
+        )
+        st.plotly_chart(fig_fc, use_container_width=True)
+
+        # Forecast Data Table
+        with st.expander("📋 View Monthly Forecast Data & Download Table"):
+            display_fc = fc_df.copy()
+            display_fc["Period"] = display_fc["date"].dt.strftime("%Y-%m")
+            display_fc = display_fc[["Period", "forecast", "lower_95", "upper_95"]].rename(columns={
+                "forecast": f"Expected Point Forecast ({y_unit.split()[0]})",
+                "lower_95": "Lower 95% Bound",
+                "upper_95": "Upper 95% Bound",
+            })
+            st.dataframe(display_fc.style.format({
+                f"Expected Point Forecast ({y_unit.split()[0]})": "{:,.2f}",
+                "Lower 95% Bound": "{:,.2f}",
+                "Upper 95% Bound": "{:,.2f}",
+            }), use_container_width=True)
+
+            csv_data = display_fc.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Download Forecast CSV",
+                data=csv_data,
+                file_name=f"cambodia_gdce_forecast_{fc_df['date'].min().strftime('%Y%m')}_{fc_df['date'].max().strftime('%Y%m')}.csv",
+                mime="text/csv",
+            )
+
+    except Exception as e:
+        st.error(f"Forecasting engine error: {e}")
+
