@@ -27,8 +27,10 @@ A production-grade, containerized Data Engineering and Business Intelligence pip
 - [Quick Start Guide](#-quick-start-guide)
 - [Testing & Quality Assurance](#-testing--quality-assurance)
 - [Useful SQL Queries](#-useful-sql-queries)
-- [Project Roadmap & Next Steps](#-project-roadmap--next-steps)
+- [Project Scope & Milestones](#-project-scope--milestones)
+- [Future Enhancements](#-future-enhancements-production-roadmap)
 - [Repository Structure](#-repository-structure)
+
 
 
 ---
@@ -329,6 +331,17 @@ The project delivery covers the core end-to-end data platform:
 - [x] **Milestone 3: Automated Pipeline Orchestration** (Apache Airflow DAG with parallel `TaskGroup`s and backfill automation from 2016 to Present).
 - [x] **Milestone 4: Interactive Business Intelligence Dashboards** (Streamlit applications for macroeconomic KPIs and logistics analytics).
 - [x] **Milestone 5: Exploratory Data Analysis & Time Series Forecasting** (Data quality integrity audit and import/export time-series modeling).
+
+---
+
+## 🚀 Future Enhancements (Production Roadmap)
+
+Potential post-internship production upgrades and enhancements:
+
+- [ ] **Automated Data Quality Gates**: Integrate Great Expectations assertions and SQL constraint tests to validate payloads before database upserts.
+- [ ] **Automated Alerting & Monitoring**: Configure Slack or Telegram webhook notifications for Airflow DAG execution failures.
+- [ ] **CI/CD Pipeline Automation**: Add GitHub Actions workflow (`.github/workflows/ci.yml`) to automatically run linter checks and test suites (`pytest`) on pull requests.
+- [ ] **Automated Forecast Model Serving**: Productionize monthly time-series inference directly into analytical fact tables.
 
 ---
 
