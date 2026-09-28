@@ -1,10 +1,15 @@
 # 🇰🇭 Cambodia GDCE Multi-Pillar Trade & Transport ETL Warehouse
 
+[![Status](https://img.shields.io/badge/Status-Active%20Development-orange?logo=git&logoColor=white)](https://github.com/Fie21/cambodia-trade-etl-pipeline)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Apache Airflow](https://img.shields.io/badge/Apache_Airflow-2.9-017CEE?logo=apacheairflow&logoColor=white)](https://airflow.apache.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.37-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+
+> 🚧 **Project Status: Work in Progress (WIP)**
+>
+> This repository is actively under development for the Cambodia GDCE Trade Data Engineering research project. Core ingestion, 2-tier data warehousing, Airflow batch orchestration, and Streamlit dashboards are functional, with automated quality gates and advanced modeling currently being expanded.
 
 A production-grade, containerized Data Engineering and Business Intelligence pipeline that ingests, cleans, warehouses, and visualizes over **10 years of monthly international merchandise trade and freight logistics statistics (2016–2026)** from the official **General Department of Customs and Excise of Cambodia (GDCE)**.
 
@@ -21,7 +26,9 @@ A production-grade, containerized Data Engineering and Business Intelligence pip
 - [Quick Start Guide](#-quick-start-guide)
 - [Testing & Quality Assurance](#-testing--quality-assurance)
 - [Useful SQL Queries](#-useful-sql-queries)
+- [Project Roadmap & Next Steps](#-project-roadmap--next-steps)
 - [Repository Structure](#-repository-structure)
+
 
 ---
 
@@ -309,6 +316,20 @@ GROUP BY country_name_en, trade_type
 ORDER BY total_value_usd DESC
 LIMIT 15;
 ```
+
+---
+
+## 🗺️ Project Roadmap & Next Steps
+
+The project follows an incremental engineering milestone roadmap:
+
+- [x] **Milestone 1: Multi-Pillar Ingestion & Staging** (Transport Mode, Partner Countries, SITC Sectors, HS Chapters).
+- [x] **Milestone 2: 2-Tier Data Warehouse Modeling** (PostgreSQL DDL schemas, primary key constraints, indexing, and staging JSONB audit trails).
+- [x] **Milestone 3: Automated Orchestration & Backfill** (Apache Airflow monthly DAG with parallel `TaskGroup`s).
+- [x] **Milestone 4: Interactive BI & DE Telemetry Dashboards** (Streamlit dual applications on Ports 8501 and 8502).
+- [ ] **Milestone 5: Automated Data Quality Gates & Alerting** (Integration of Great Expectations / SQL assertion operators and Slack failure alerts in Airflow).
+- [ ] **Milestone 6: CI/CD Pipeline Automation** (GitHub Actions workflow for automated test runs on PR/push).
+- [ ] **Milestone 7: Production Forecast Serving** (Automating monthly time-series inference models directly into the analytical fact tables).
 
 ---
 
