@@ -7,9 +7,10 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.37-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
-> 🚧 **Project Status: Work in Progress (WIP)**
+> 📊 **Project Overview**
 >
-> This repository is actively under development for the Cambodia GDCE Trade Data Engineering research project. Core ingestion, 2-tier data warehousing, Airflow batch orchestration, and Streamlit dashboards are functional, with automated quality gates and advanced modeling currently being expanded.
+> An end-to-end Data Engineering & Business Intelligence platform for Cambodia GDCE International Trade Data. Featuring automated scrapers across 4 statistical pillars, 2-tier PostgreSQL Data Warehouse, Apache Airflow batch scheduling, interactive Streamlit analytics dashboards, and predictive time-series forecasting models.
+
 
 A production-grade, containerized Data Engineering and Business Intelligence pipeline that ingests, cleans, warehouses, and visualizes over **10 years of monthly international merchandise trade and freight logistics statistics (2016–2026)** from the official **General Department of Customs and Excise of Cambodia (GDCE)**.
 
@@ -319,17 +320,15 @@ LIMIT 15;
 
 ---
 
-## 🗺️ Project Roadmap & Next Steps
+## 🗺️ Project Scope & Milestones
 
-The project follows an incremental engineering milestone roadmap:
+The project delivery covers the core end-to-end data platform:
 
-- [x] **Milestone 1: Multi-Pillar Ingestion & Staging** (Transport Mode, Partner Countries, SITC Sectors, HS Chapters).
-- [x] **Milestone 2: 2-Tier Data Warehouse Modeling** (PostgreSQL DDL schemas, primary key constraints, indexing, and staging JSONB audit trails).
-- [x] **Milestone 3: Automated Orchestration & Backfill** (Apache Airflow monthly DAG with parallel `TaskGroup`s).
-- [x] **Milestone 4: Interactive BI & DE Telemetry Dashboards** (Streamlit dual applications on Ports 8501 and 8502).
-- [ ] **Milestone 5: Automated Data Quality Gates & Alerting** (Integration of Great Expectations / SQL assertion operators and Slack failure alerts in Airflow).
-- [ ] **Milestone 6: CI/CD Pipeline Automation** (GitHub Actions workflow for automated test runs on PR/push).
-- [ ] **Milestone 7: Production Forecast Serving** (Automating monthly time-series inference models directly into the analytical fact tables).
+- [x] **Milestone 1: Multi-Pillar Data Ingestion** (GDCE API scrapers with retry logic for Transport Modes, Partner Countries, SITC Sectors, and HS Chapters).
+- [x] **Milestone 2: 2-Tier Data Warehouse & Relational Modeling** (PostgreSQL staging audit trail and analytical fact tables with idempotent upserts).
+- [x] **Milestone 3: Automated Pipeline Orchestration** (Apache Airflow DAG with parallel `TaskGroup`s and backfill automation from 2016 to Present).
+- [x] **Milestone 4: Interactive Business Intelligence Dashboards** (Streamlit applications for macroeconomic KPIs and logistics analytics).
+- [x] **Milestone 5: Exploratory Data Analysis & Time Series Forecasting** (Data quality integrity audit and import/export time-series modeling).
 
 ---
 
