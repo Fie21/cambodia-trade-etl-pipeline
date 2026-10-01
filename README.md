@@ -7,9 +7,11 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.37-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
-> 📊 **Project Overview**
+> 📊 **Project Overview & Progress**
 >
 > An end-to-end Data Engineering & Business Intelligence platform for Cambodia GDCE International Trade Data. Featuring automated scrapers across 4 statistical pillars, 2-tier PostgreSQL Data Warehouse, Apache Airflow batch scheduling, interactive Streamlit analytics dashboards, and predictive time-series forecasting models.
+> 
+> 📋 **Supervisor Progress Report:** [View Project Progress Report (Markdown)](docs/PROJECT_PROGRESS_REPORT.md) | [Download Excel Report (.xlsx)](docs/Project_Progress_Report.xlsx)
 
 
 A production-grade, containerized Data Engineering and Business Intelligence pipeline that ingests, cleans, warehouses, and visualizes over **10 years of monthly international merchandise trade and freight logistics statistics (2016–2026)** from the official **General Department of Customs and Excise of Cambodia (GDCE)**.
@@ -283,10 +285,10 @@ python3 -m unittest discover tests
 ```
 
 Tests cover:
-- **DAG Integrity**: Graph validation, cycle checks, and task structure ([`tests/test_dag_integrity.py`](file:///Users/soupichchomrong/transport-etl-pipeline/tests/test_dag_integrity.py)).
-- **Scraper Resiliency**: Mocked HTTP status codes, payload structures, and parsing ([`tests/test_scrape.py`](file:///Users/soupichchomrong/transport-etl-pipeline/tests/test_scrape.py), [`tests/test_scrape_country.py`](file:///Users/soupichchomrong/transport-etl-pipeline/tests/test_scrape_country.py)).
-- **Data Transformations**: Numeric sanitization, unit conversions, and column derivations ([`tests/test_transform.py`](file:///Users/soupichchomrong/transport-etl-pipeline/tests/test_transform.py)).
-- **Database Upserts**: Idempotent insert behavior and transaction integrity ([`tests/test_load.py`](file:///Users/soupichchomrong/transport-etl-pipeline/tests/test_load.py)).
+- **DAG Integrity**: Graph validation, cycle checks, and task structure ([`tests/test_dag_integrity.py`](tests/test_dag_integrity.py)).
+- **Scraper Resiliency**: Mocked HTTP status codes, payload structures, and parsing ([`tests/test_scrape.py`](tests/test_scrape.py), [`tests/test_scrape_country.py`](tests/test_scrape_country.py)).
+- **Data Transformations**: Numeric sanitization, unit conversions, and column derivations ([`tests/test_transform.py`](tests/test_transform.py)).
+- **Database Upserts**: Idempotent insert behavior and transaction integrity ([`tests/test_load.py`](tests/test_load.py)).
 
 ---
 
@@ -364,10 +366,14 @@ transport-etl-pipeline/
 │   ├── airflow/                      # Airflow container Dockerfile
 │   ├── pgadmin/                      # Pre-configured pgAdmin servers definition
 │   └── postgres/                     # Postgres database bootstrap scripts
+├── docs/
+│   ├── PROJECT_PROGRESS_REPORT.md    # Master Markdown progress report for supervisor review
+│   └── Project_Progress_Report.xlsx  # 4-sheet formatted Excel progress report
 ├── sql/
 │   └── init_warehouse.sql            # DDL schemas, fact tables & index definitions
 ├── src/
 │   ├── config.py                     # Centralized configurations & paths
+│   ├── forecast.py                   # Holt-Winters & SARIMAX time-series forecasting engine
 │   ├── scrape.py                     # Main scrape runner
 │   ├── transform.py                  # Normalization & metric standardizations
 │   ├── load.py                       # PostgreSQL staging & fact table upserts
