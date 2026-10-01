@@ -84,8 +84,10 @@ services:
     command: ["app_business.py", "--server.port=8501", "--server.address=0.0.0.0"]
     environment:
       DW_CONN_STR: postgresql+psycopg2://airflow:airflow@postgres:5432/transport_dw
+      PYTHONPATH: /app:/app/src
     volumes:
       - ./dashboard:/app
+      - ./src:/app/src
     ports:
       - "8501:8501"
     depends_on:
@@ -99,8 +101,10 @@ services:
     command: ["app_data_engineering.py", "--server.port=8502", "--server.address=0.0.0.0"]
     environment:
       DW_CONN_STR: postgresql+psycopg2://airflow:airflow@postgres:5432/transport_dw
+      PYTHONPATH: /app:/app/src
     volumes:
       - ./dashboard:/app
+      - ./src:/app/src
     ports:
       - "8502:8502"
     depends_on:

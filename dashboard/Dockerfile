@@ -8,7 +8,8 @@ WORKDIR /app
 COPY dashboard/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --default-timeout=1000 --retries 10 --prefer-binary -r /app/requirements.txt
 
-COPY dashboard/app.py /app/app.py
+COPY dashboard/ /app/
+COPY src/ /app/src/
 
 EXPOSE 8501 8502
 
