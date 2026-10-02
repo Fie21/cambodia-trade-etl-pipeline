@@ -355,6 +355,77 @@ COLOR_TRADE_VOL = "#3b82f6"   # Royal Blue for Total Trade Volume Card & Net Bal
 COLOR_SURPLUS = "#10b981"     # Emerald Green for Trade Surplus
 COLOR_DEFICIT = "#ef4444"     # Rose Red for Trade Deficit
 
+# Transport Mode Icons, Labels, and Theme Palette
+TRANSPORT_MODE_MAPPINGS = {
+    "Sea transport": {
+        "icon": "🚢",
+        "label": "🚢 Sea Freight (Maritime)",
+        "short": "🚢 Sea",
+        "color": "#0284c7",
+    },
+    "Road transport": {
+        "icon": "🚚",
+        "label": "🚚 Road Transport (Trucking)",
+        "short": "🚚 Road",
+        "color": "#f59e0b",
+    },
+    "Inland waterways transport": {
+        "icon": "⛴️",
+        "label": "⛴️ Inland Waterways (River Barge)",
+        "short": "⛴️ River",
+        "color": "#06b6d4",
+    },
+    "Air transport": {
+        "icon": "✈️",
+        "label": "✈️ Air Cargo (Aviation)",
+        "short": "✈️ Air",
+        "color": "#8b5cf6",
+    },
+    "Rail transport": {
+        "icon": "🚆",
+        "label": "🚆 Rail Transport (Railway)",
+        "short": "🚆 Rail",
+        "color": "#10b981",
+    },
+    "Postal Transport": {
+        "icon": "📮",
+        "label": "📮 Postal & Express Consignment",
+        "short": "📮 Postal",
+        "color": "#ec4899",
+    },
+    "Transport on fixed installation": {
+        "icon": "⚡",
+        "label": "⚡ Fixed Installation / Grid",
+        "short": "⚡ Fixed",
+        "color": "#64748b",
+    },
+}
+
+
+def get_transport_mode_meta(description: str):
+    """Returns (label, icon, color, short_label) for any transport mode description."""
+    desc_str = str(description).strip()
+    for key, meta in TRANSPORT_MODE_MAPPINGS.items():
+        if key.lower() == desc_str.lower():
+            return meta["label"], meta["icon"], meta["color"], meta["short"]
+    for key, meta in TRANSPORT_MODE_MAPPINGS.items():
+        if key.lower() in desc_str.lower() or desc_str.lower() in key.lower():
+            return meta["label"], meta["icon"], meta["color"], meta["short"]
+    if "sea" in desc_str.lower() or "marine" in desc_str.lower():
+        return f"🚢 {desc_str}", "🚢", "#0284c7", "🚢 Sea"
+    elif "road" in desc_str.lower() or "land" in desc_str.lower() or "vehicle" in desc_str.lower():
+        return f"🚚 {desc_str}", "🚚", "#f59e0b", "🚚 Road"
+    elif "waterway" in desc_str.lower() or "river" in desc_str.lower() or "barge" in desc_str.lower():
+        return f"⛴️ {desc_str}", "⛴️", "#06b6d4", "⛴️ River"
+    elif "air" in desc_str.lower() or "aviation" in desc_str.lower():
+        return f"✈️ {desc_str}", "✈️", "#8b5cf6", "✈️ Air"
+    elif "rail" in desc_str.lower() or "train" in desc_str.lower():
+        return f"🚆 {desc_str}", "🚆", "#10b981", "🚆 Rail"
+    elif "post" in desc_str.lower() or "mail" in desc_str.lower() or "courier" in desc_str.lower():
+        return f"📮 {desc_str}", "📮", "#ec4899", "📮 Post"
+    return f"📦 {desc_str}", "📦", "#64748b", f"📦 {desc_str[:12]}"
+
+
 # Geographic Coordinates for Bilateral Flow Map (ISO-3, ISO-2, & Standard English Names)
 CAMBODIA_GEO = {"lat": 12.5657, "lon": 104.9910, "name": "Cambodia (Phnom Penh Hub)"}
 
@@ -646,56 +717,141 @@ with tab1:
 
     sector_title_suffix = f" — {selected_sector_name}" if selected_sector_chapters is not None else ""
 
-    if is_yearly_view:
-        # Yearly Aggregated View
-        yearly_temp = f_tab1_macro.copy()
-        yearly_temp["year"] = yearly_temp["date"].dt.year
-        yearly_trade = yearly_temp.groupby(["year", "trade_type"])[val_col].sum().reset_index()
-        yearly_piv = yearly_trade.pivot(index="year", columns="trade_type", values=val_col).fillna(0)
-        yearly_piv["Trade Balance"] = yearly_piv.get("Export", 0) - yearly_piv.get("Import", 0)
-        yearly_piv["Total Trade"] = yearly_piv.get("Export", 0) + yearly_piv.get("Import", 0)
+    col_dyn, col_transport = st.columns([1.65, 1.35])
 
-        fig_macro = go.Figure()
-        if "Export" in yearly_piv:
-            fig_macro.add_trace(go.Bar(x=yearly_piv.index, y=yearly_piv["Export"], name="Annual Exports", marker_color=COLOR_EXPORT))
-        if "Import" in yearly_piv:
-            fig_macro.add_trace(go.Bar(x=yearly_piv.index, y=yearly_piv["Import"], name="Annual Imports", marker_color=COLOR_IMPORT))
-        if "Trade Balance" in yearly_piv:
-            fig_macro.add_trace(go.Scatter(x=yearly_piv.index, y=yearly_piv["Trade Balance"], name="Annual Net Trade Balance", line=dict(color=bal_color, width=3.5), mode="lines+markers", marker=dict(size=8)))
+    with col_dyn:
+        if is_yearly_view:
+            # Yearly Aggregated View
+            yearly_temp = f_tab1_macro.copy()
+            yearly_temp["year"] = yearly_temp["date"].dt.year
+            yearly_trade = yearly_temp.groupby(["year", "trade_type"])[val_col].sum().reset_index()
+            yearly_piv = yearly_trade.pivot(index="year", columns="trade_type", values=val_col).fillna(0)
+            yearly_piv["Trade Balance"] = yearly_piv.get("Export", 0) - yearly_piv.get("Import", 0)
+            yearly_piv["Total Trade"] = yearly_piv.get("Export", 0) + yearly_piv.get("Import", 0)
 
-        fig_macro.update_layout(
-            title=f"📊 Annual Trade Performance by Calendar Year{sector_title_suffix} ({min_dw_date.year} – {max_dw_date.year})",
-            barmode="group",
-            xaxis=dict(title="Calendar Year", tickmode="linear", dtick=1),
-            yaxis_title=f"Value ({currency})",
-            hovermode="x unified",
-            height=500,
+            fig_macro = go.Figure()
+            if "Export" in yearly_piv:
+                fig_macro.add_trace(go.Bar(x=yearly_piv.index, y=yearly_piv["Export"], name="Annual Exports", marker_color=COLOR_EXPORT))
+            if "Import" in yearly_piv:
+                fig_macro.add_trace(go.Bar(x=yearly_piv.index, y=yearly_piv["Import"], name="Annual Imports", marker_color=COLOR_IMPORT))
+            if "Trade Balance" in yearly_piv:
+                fig_macro.add_trace(go.Scatter(x=yearly_piv.index, y=yearly_piv["Trade Balance"], name="Annual Net Trade Balance", line=dict(color=bal_color, width=3.5), mode="lines+markers", marker=dict(size=8)))
+
+            fig_macro.update_layout(
+                title=f"📊 Annual Trade Performance by Calendar Year{sector_title_suffix} ({min_dw_date.year} – {max_dw_date.year})",
+                barmode="group",
+                xaxis=dict(title="Calendar Year", tickmode="linear", dtick=1),
+                yaxis_title=f"Value ({currency})",
+                hovermode="x unified",
+                height=490,
+                margin=dict(l=0, r=10, t=40, b=10),
+            )
+            st.plotly_chart(fig_macro, use_container_width=True)
+        else:
+            # Monthly Granular View
+            monthly_trade = f_tab1_macro.groupby(["date", "trade_type"])[val_col].sum().reset_index()
+            monthly_piv = monthly_trade.pivot(index="date", columns="trade_type", values=val_col).fillna(0)
+            if "Export" in monthly_piv and "Import" in monthly_piv:
+                monthly_piv["Trade Balance"] = monthly_piv["Export"] - monthly_piv["Import"]
+
+            fig_macro = go.Figure()
+            if "Export" in monthly_piv:
+                fig_macro.add_trace(go.Bar(x=monthly_piv.index, y=monthly_piv["Export"], name="Exports", marker_color=COLOR_EXPORT))
+            if "Import" in monthly_piv:
+                fig_macro.add_trace(go.Bar(x=monthly_piv.index, y=monthly_piv["Import"], name="Imports", marker_color=COLOR_IMPORT))
+            if "Trade Balance" in monthly_piv:
+                fig_macro.add_trace(go.Scatter(x=monthly_piv.index, y=monthly_piv["Trade Balance"], name="Net Trade Balance", line=dict(color=bal_color, width=3), mode="lines+markers", marker=dict(size=6)))
+
+            fig_macro.update_layout(
+                title=f"Monthly Trade Dynamics{sector_title_suffix} ({t_start.strftime('%b %Y')} to {t_end.strftime('%b %Y')})",
+                barmode="group",
+                xaxis_title="Period",
+                yaxis_title=f"Value ({currency})",
+                hovermode="x unified",
+                height=490,
+                margin=dict(l=0, r=10, t=40, b=10),
+            )
+            st.plotly_chart(fig_macro, use_container_width=True)
+
+    with col_transport:
+        # Transport Mode Breakdown next to Trade Dynamics
+        st.markdown("#### 🚢 Freight by Transport Mode")
+        st.caption(f"Modal freight breakdown during **{period_info.split('(')[-1].replace(')', '') if '(' in period_info else period_info}**.")
+
+        f_tab1_transport = df_transport[(df_transport["date"] >= t_start) & (df_transport["date"] <= t_end)]
+        known_modes = list(TRANSPORT_MODE_MAPPINGS.keys())
+        f_tab1_transport_clean = f_tab1_transport[
+            f_tab1_transport["description"].isin(known_modes) | (f_tab1_transport["net_weight_ton"] > 0)
+        ].copy()
+
+        t_metric_opt = st.radio(
+            "Modal Metric",
+            [f"Trade Value ({currency})", "Net Weight (Metric Tons)"],
+            horizontal=True,
+            key="tab1_transport_metric_choice",
         )
-        st.plotly_chart(fig_macro, use_container_width=True)
-    else:
-        # Monthly Granular View
-        monthly_trade = f_tab1_macro.groupby(["date", "trade_type"])[val_col].sum().reset_index()
-        monthly_piv = monthly_trade.pivot(index="date", columns="trade_type", values=val_col).fillna(0)
-        if "Export" in monthly_piv and "Import" in monthly_piv:
-            monthly_piv["Trade Balance"] = monthly_piv["Export"] - monthly_piv["Import"]
+        is_wt = "Weight" in t_metric_opt
+        t_col_name = "net_weight_ton" if is_wt else val_col
+        t_unit_lbl = "MT" if is_wt else currency
 
-        fig_macro = go.Figure()
-        if "Export" in monthly_piv:
-            fig_macro.add_trace(go.Bar(x=monthly_piv.index, y=monthly_piv["Export"], name="Exports", marker_color=COLOR_EXPORT))
-        if "Import" in monthly_piv:
-            fig_macro.add_trace(go.Bar(x=monthly_piv.index, y=monthly_piv["Import"], name="Imports", marker_color=COLOR_IMPORT))
-        if "Trade Balance" in monthly_piv:
-            fig_macro.add_trace(go.Scatter(x=monthly_piv.index, y=monthly_piv["Trade Balance"], name="Net Trade Balance", line=dict(color=bal_color, width=3), mode="lines+markers", marker=dict(size=6)))
+        modal_summary = []
+        for desc, g in f_tab1_transport_clean.groupby("description"):
+            lbl, icon, col, short_lbl = get_transport_mode_meta(desc)
+            tot_m = g[t_col_name].sum()
+            tot_val = g[val_col].sum()
+            tot_wt = g["net_weight_ton"].sum()
+            exp_m = g[g["regime"] == "Export"][t_col_name].sum()
+            imp_m = g[g["regime"] == "Import"][t_col_name].sum()
+            modal_summary.append({
+                "raw_desc": desc,
+                "label": lbl,
+                "icon": icon,
+                "short": short_lbl,
+                "color": col,
+                "metric_val": tot_m,
+                "value_usd": tot_val,
+                "net_weight_ton": tot_wt,
+                "exp_val": exp_m,
+                "imp_val": imp_m,
+            })
+        df_modal = pd.DataFrame(modal_summary)
+        if not df_modal.empty:
+            df_modal = df_modal.sort_values(by="metric_val", ascending=False)
+            total_modal_sum = df_modal["metric_val"].sum()
 
-        fig_macro.update_layout(
-            title=f"Monthly Trade Dynamics{sector_title_suffix} ({t_start.strftime('%b %Y')} to {t_end.strftime('%b %Y')})",
-            barmode="group",
-            xaxis_title="Period",
-            yaxis_title=f"Value ({currency})",
-            hovermode="x unified",
-            height=480,
-        )
-        st.plotly_chart(fig_macro, use_container_width=True)
+            fig_modal_donut = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=df_modal["label"],
+                        values=df_modal["metric_val"],
+                        hole=0.46,
+                        marker=dict(colors=df_modal["color"].tolist()),
+                        textinfo="percent+label",
+                        textposition="inside",
+                        insidetextorientation="radial",
+                        hovertemplate="<b>%{label}</b><br>● Volume: <b>%{value:,.0f} " + t_unit_lbl + "</b><br>● Share: <b>%{percent}</b><extra></extra>",
+                    )
+                ]
+            )
+            fig_modal_donut.update_layout(
+                showlegend=False,
+                margin=dict(l=0, r=0, t=10, b=10),
+                height=380,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                annotations=[
+                    dict(
+                        text=f"<b>{df_modal['icon'].iloc[0]} Top Mode</b><br><span style='font-size:0.8rem;'>{df_modal['short'].iloc[0]}</span>",
+                        x=0.5,
+                        y=0.5,
+                        font_size=13,
+                        showarrow=False,
+                    )
+                ],
+            )
+            st.plotly_chart(fig_modal_donut, use_container_width=True)
+        else:
+            st.info("No modal transport records found for this period.")
 
     # =========================================================================
     # 🌐 GLOBAL BILATERAL TRADE FLOW MAP (CAMBODIA ➔ WORLD HUB)
@@ -791,7 +947,7 @@ with tab1:
 
         hover_info = (
             f"<b>{canonical_name}</b> ({flow_direction_label})<br>"
-            f"● Period: <b>{t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')}</b><br>"
+            f"● Period: <b>{t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y') flights if False else ''}</b><br>"
             f"● Total Volume: <b>{p_compact}</b> ({p_full})<br>"
             f"● Active Share: <b>{pct_share:.2f}%</b><br>"
             f"● Exports: <b>{format_currency_smart(p_exp, curr_symbol, num_scale)[0]}</b> | Imports: <b>{format_currency_smart(p_imp, curr_symbol, num_scale)[0]}</b>"
@@ -1097,34 +1253,64 @@ with tab1:
 
 with tab2:
     st.subheader("🚢 Freight Logistics & Modal Share (Port Authority & Forwarders)")
-    mode_metric = st.radio("Logistics Metric", ["Net Weight (Metric Tons)", f"Trade Value ({currency})"], horizontal=True)
+    mode_metric = st.radio("Logistics Metric", ["Net Weight (Metric Tons)", f"Trade Value ({currency})"], horizontal=True, key="tab2_modal_metric_choice")
     metric_col = "net_weight_ton" if "Weight" in mode_metric else val_col
 
-    t_col1, t_col2 = st.columns([2, 1])
+    # Clean dataset with mapped icon labels
+    f_transport_tab2 = f_transport.copy()
+    known_modes = list(TRANSPORT_MODE_MAPPINGS.keys())
+    f_transport_tab2 = f_transport_tab2[
+        f_transport_tab2["description"].isin(known_modes) | (f_transport_tab2["net_weight_ton"] > 0)
+    ].copy()
+    f_transport_tab2["mode_label"] = f_transport_tab2["description"].apply(lambda d: get_transport_mode_meta(d)[0])
+    f_transport_tab2["mode_color"] = f_transport_tab2["description"].apply(lambda d: get_transport_mode_meta(d)[2])
+
+    color_map = {row["mode_label"]: row["mode_color"] for _, row in f_transport_tab2.drop_duplicates(subset=["mode_label"]).iterrows()}
+
+    t_col1, t_col2 = st.columns([1.75, 1.25])
     with t_col1:
         fig_modes = px.line(
-            f_transport,
+            f_transport_tab2,
             x="date",
             y=metric_col,
-            color="description",
+            color="mode_label",
             facet_row="regime",
-            title="Freight Dynamics by Transport Mode (Import vs Export)",
-            labels={metric_col: mode_metric, "description": "Transport Mode"},
+            title=f"📈 Freight Dynamics by Transport Mode ({mode_metric})",
+            labels={metric_col: mode_metric, "mode_label": "Transport Mode"},
+            color_discrete_map=color_map,
         )
-        fig_modes.update_layout(height=500)
+        fig_modes.update_layout(height=500, hovermode="x unified")
         st.plotly_chart(fig_modes, use_container_width=True)
 
     with t_col2:
         st.markdown("#### Modal Share Breakdown")
-        share_df = f_transport.groupby("description")[metric_col].sum().reset_index()
-        fig_pie = px.pie(share_df, names="description", values=metric_col, hole=0.4, title="Total Transport Share")
+        share_df = f_transport_tab2.groupby(["mode_label", "description"])[metric_col].sum().reset_index()
+        share_df["color"] = share_df["description"].apply(lambda d: get_transport_mode_meta(d)[2])
+        fig_pie = px.pie(
+            share_df,
+            names="mode_label",
+            values=metric_col,
+            hole=0.45,
+            title=f"Total Modal Distribution ({mode_metric})",
+            color="mode_label",
+            color_discrete_map={row["mode_label"]: row["color"] for _, row in share_df.iterrows()},
+        )
+        fig_pie.update_layout(height=500, showlegend=True)
         st.plotly_chart(fig_pie, use_container_width=True)
 
-    st.markdown("#### Port Throughput (Maritime / Sea Transport Focus)")
-    sea_df = f_transport[f_transport["description"].str.contains("Sea|Marine|Port", case=False, na=False)]
+    st.markdown("#### 🚢 Port Throughput & Maritime Focus (PAS & PPAP Sea/River Hubs)")
+    sea_df = f_transport_tab2[f_transport_tab2["description"].str.contains("Sea|Marine|Port|waterway", case=False, na=False)]
     if not sea_df.empty:
         sea_piv = sea_df.pivot_table(index="date", columns="regime", values=metric_col, aggfunc="sum").fillna(0)
-        fig_sea = px.bar(sea_piv.reset_index(), x="date", y=[c for c in sea_piv.columns], title="Maritime Cargo Volume (Imports vs Exports)", barmode="group")
+        fig_sea = px.bar(
+            sea_piv.reset_index(),
+            x="date",
+            y=[c for c in sea_piv.columns],
+            title=f"Maritime & River Cargo Volume — Imports vs Exports ({mode_metric})",
+            barmode="group",
+            color_discrete_map={"Export": COLOR_EXPORT, "Import": COLOR_IMPORT},
+        )
+        fig_sea.update_layout(height=420)
         st.plotly_chart(fig_sea, use_container_width=True)
 
 with tab3:
