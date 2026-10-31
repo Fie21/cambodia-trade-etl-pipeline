@@ -75,16 +75,23 @@ if forecast_monthly_series is None or evaluate_model_tournament is None:
             except Exception as _load_err:
                 _forecast_import_err = f"Error loading {_path}: {_load_err}"
 
-# Support Streamlit Cloud Secrets, environment variables, or local Docker defaults
-DW_CONN_STR = os.environ.get(
-    "DW_CONN_STR",
-    "postgresql+psycopg2://airflow:airflow@postgres:5432/transport_dw",
-)
-try:
-    if hasattr(st, "secrets") and "DW_CONN_STR" in st.secrets:
-        DW_CONN_STR = st.secrets["DW_CONN_STR"]
-except Exception:
-    pass
+# Support environment variables (Docker/local), Streamlit Cloud Secrets, or default
+DW_CONN_STR = os.environ.get("DW_CONN_STR")
+if not DW_CONN_STR:
+    try:
+        possible_secrets = [
+            Path.home() / ".streamlit" / "secrets.toml",
+            Path("/app/.streamlit/secrets.toml"),
+            Path.cwd() / ".streamlit" / "secrets.toml",
+            Path(__file__).resolve().parent / ".streamlit" / "secrets.toml",
+        ]
+        if any(p.is_file() for p in possible_secrets) and "DW_CONN_STR" in st.secrets:
+            DW_CONN_STR = st.secrets["DW_CONN_STR"]
+    except Exception:
+        pass
+
+if not DW_CONN_STR:
+    DW_CONN_STR = "postgresql+psycopg2://airflow:airflow@postgres:5432/transport_dw"
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
