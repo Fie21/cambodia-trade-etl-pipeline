@@ -2042,11 +2042,52 @@ with tab3:
         c_surp_str, _ = format_currency_smart(tot_surplus_val, curr_symbol, scale_mode=num_scale)
         c_def_str, _ = format_currency_smart(tot_deficit_val, curr_symbol, scale_mode=num_scale)
         
-        st.info(
-            f"💡 **Economic Balance Insight:** "
-            f"Cambodia generates its largest trade surpluses (**+{c_surp_str}**) in **Apparel (Ch. 61 & 62)**, **Footwear (Ch. 64)**, **Solar & Electronics (Ch. 85)**, and **Cereals (Ch. 10)**. "
-            f"These earnings offset structural deficits (**-{c_def_str}**) in **Mineral Fuels (Ch. 27)**, **Vehicles (Ch. 87)**, **Knitted Fabric Inputs (Ch. 60)**, and **Industrial Machinery (Ch. 84)**."
-        )
+        st.markdown("#### 💡 Macroeconomic Structure & Balance Drivers")
+        c_surp_col, c_def_col = st.columns(2)
+
+        with c_surp_col:
+            st.markdown(
+                f"""
+                <div style="background: rgba(16, 185, 129, 0.08); border-left: 5px solid #10B981; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 1.02rem; font-weight: 700; color: #10B981;">🟢 Key Trade Surpluses (Exports > Imports)</span>
+                        <span style="font-size: 1.15rem; font-weight: 800; color: #10B981; background: rgba(16, 185, 129, 0.18); padding: 3px 10px; border-radius: 6px;">+{c_surp_str}</span>
+                    </div>
+                    <p style="margin: 0 0 6px 0; font-size: 0.92rem; opacity: 0.9;">
+                        Primary foreign exchange earners and industrial export pillars:
+                    </p>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 0.92rem; line-height: 1.6;">
+                        <li><b>Apparel & Garments</b> <span style="opacity: 0.75;">(HS Ch. 61 & 62)</span></li>
+                        <li><b>Footwear & Leather Goods</b> <span style="opacity: 0.75;">(HS Ch. 64)</span></li>
+                        <li><b>Solar Panels & Electrical Machinery</b> <span style="opacity: 0.75;">(HS Ch. 85)</span></li>
+                        <li><b>Cereals & Milled Rice</b> <span style="opacity: 0.75;">(HS Ch. 10)</span></li>
+                    </ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with c_def_col:
+            st.markdown(
+                f"""
+                <div style="background: rgba(239, 68, 68, 0.08); border-left: 5px solid #EF4444; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 1.02rem; font-weight: 700; color: #EF4444;">🔴 Structural Trade Deficits (Imports > Exports)</span>
+                        <span style="font-size: 1.15rem; font-weight: 800; color: #EF4444; background: rgba(239, 68, 68, 0.18); padding: 3px 10px; border-radius: 6px;">-{c_def_str}</span>
+                    </div>
+                    <p style="margin: 0 0 6px 0; font-size: 0.92rem; opacity: 0.9;">
+                        Essential inputs and capital equipment required to sustain production:
+                    </p>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 0.92rem; line-height: 1.6;">
+                        <li><b>Mineral Fuels & Refined Oil</b> <span style="opacity: 0.75;">(HS Ch. 27)</span></li>
+                        <li><b>Vehicles & Automotive Parts</b> <span style="opacity: 0.75;">(HS Ch. 87)</span></li>
+                        <li><b>Knitted / Crocheted Fabric Inputs</b> <span style="opacity: 0.75;">(HS Ch. 60 — garment inputs)</span></li>
+                        <li><b>Industrial Machinery & Mechanical</b> <span style="opacity: 0.75;">(HS Ch. 84 — capital goods)</span></li>
+                    </ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     # =========================================================================
     # SUB-TAB 2: ECONOMIC STAGES OF PROCESSING (UN BEC FRAMEWORK)
