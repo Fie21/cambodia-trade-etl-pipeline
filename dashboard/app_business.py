@@ -69,10 +69,16 @@ if forecast_monthly_series is None or evaluate_model_tournament is None:
             except Exception as _load_err:
                 _forecast_import_err = f"Error loading {_path}: {_load_err}"
 
-DW_CONN_STR = os.environ.get(
-    "DW_CONN_STR",
-    "postgresql+psycopg2://airflow:airflow@postgres:5432/transport_dw",
-)
+# Support Streamlit Cloud Secrets, environment variables, or local Docker defaults
+if hasattr(st, "secrets") and "DW_CONN_STR" in st.secrets:
+    DW_CONN_STR = st.secrets["DW_CONN_STR"]
+else:
+    DW_CONN_STR = os.environ.get(
+        "DW_CONN_STR",
+        "postgresql+psycopg2://airflow:airflow@postgres:5432/transport_dw",
+    )
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 st.set_page_config(
     page_title="Cambodia GDCE International Trade Analytics",
@@ -90,78 +96,124 @@ def get_engine():
             pass
         return engine
     except Exception:
-        localhost_str = DW_CONN_STR.replace("@postgres:", "@localhost:")
-        return create_engine(localhost_str)
+        try:
+            localhost_str = DW_CONN_STR.replace("@postgres:", "@localhost:")
+            engine = create_engine(localhost_str, connect_args={"connect_timeout": 3})
+            with engine.connect() as conn:
+                pass
+            return engine
+        except Exception:
+            return None
 
 
 @st.cache_data(ttl=300)
 def load_transport_data() -> pd.DataFrame:
     engine = get_engine()
-    query = """
-        SELECT
-            date, period, regime, description, description_kh,
-            net_weight_ton, net_weight_kg, value_usd, value_khr, loaded_at
-        FROM warehouse.fact_transportation_stats
-        ORDER BY date ASC, regime ASC, description ASC
-    """
-    return pd.read_sql(query, engine, parse_dates=["date"])
+    if engine is not None:
+        try:
+            query = """
+                SELECT
+                    date, period, regime, description, description_kh,
+                    net_weight_ton, net_weight_kg, value_usd, value_khr, loaded_at
+                FROM warehouse.fact_transportation_stats
+                ORDER BY date ASC, regime ASC, description ASC
+            """
+            return pd.read_sql(query, engine, parse_dates=["date"])
+        except Exception:
+            pass
+    # Offline Parquet Fallback (for zero-config Streamlit Cloud deployment)
+    p_path = DATA_DIR / "fact_transportation_stats.parquet"
+    if p_path.is_file():
+        df = pd.read_parquet(p_path)
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
 def load_country_data() -> pd.DataFrame:
     engine = get_engine()
-    query = """
-        SELECT
-            date, period, year, month, country_code, country_code3,
-            country_name_en, country_name_kh, country_groups,
-            trade_type, regime_code, value_usd, value_khr, loaded_at
-        FROM warehouse.fact_country_trade
-        ORDER BY date ASC, trade_type ASC, value_usd DESC
-    """
-    return pd.read_sql(query, engine, parse_dates=["date"])
+    if engine is not None:
+        try:
+            query = """
+                SELECT
+                    date, period, year, month, country_code, country_code3,
+                    country_name_en, country_name_kh, country_groups,
+                    trade_type, regime_code, value_usd, value_khr, loaded_at
+                FROM warehouse.fact_country_trade
+                ORDER BY date ASC, trade_type ASC, value_usd DESC
+            """
+            return pd.read_sql(query, engine, parse_dates=["date"])
+        except Exception:
+            pass
+    # Offline Parquet Fallback
+    p_path = DATA_DIR / "fact_country_trade.parquet"
+    if p_path.is_file():
+        df = pd.read_parquet(p_path)
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
 def load_sitc_data() -> pd.DataFrame:
     engine = get_engine()
-    query = """
-        SELECT
-            date, period, year, month, sitc_code, description_en,
-            description_kh, trade_type, regime_code, value_usd, value_khr, loaded_at
-        FROM warehouse.fact_trade_by_sitc
-        ORDER BY date ASC, trade_type ASC, value_usd DESC
-    """
-    return pd.read_sql(query, engine, parse_dates=["date"])
+    if engine is not None:
+        try:
+            query = """
+                SELECT
+                    date, period, year, month, sitc_code, description_en,
+                    description_kh, trade_type, regime_code, value_usd, value_khr, loaded_at
+                FROM warehouse.fact_trade_by_sitc
+                ORDER BY date ASC, trade_type ASC, value_usd DESC
+            """
+            return pd.read_sql(query, engine, parse_dates=["date"])
+        except Exception:
+            pass
+    # Offline Parquet Fallback
+    p_path = DATA_DIR / "fact_trade_by_sitc.parquet"
+    if p_path.is_file():
+        df = pd.read_parquet(p_path)
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
 def load_hs_data() -> pd.DataFrame:
     engine = get_engine()
-    query = """
-        SELECT
-            date, period, year, month, hs_chapter, description_en,
-            description_kh, trade_type, regime_code, value_usd, value_khr, loaded_at
-        FROM warehouse.fact_trade_by_hs
-        ORDER BY date ASC, trade_type ASC, value_usd DESC
-    """
-    return pd.read_sql(query, engine, parse_dates=["date"])
+    if engine is not None:
+        try:
+            query = """
+                SELECT
+                    date, period, year, month, hs_chapter, description_en,
+                    description_kh, trade_type, regime_code, value_usd, value_khr, loaded_at
+                FROM warehouse.fact_trade_by_hs
+                ORDER BY date ASC, trade_type ASC, value_usd DESC
+            """
+            return pd.read_sql(query, engine, parse_dates=["date"])
+        except Exception:
+            pass
+    # Offline Parquet Fallback
+    p_path = DATA_DIR / "fact_trade_by_hs.parquet"
+    if p_path.is_file():
+        df = pd.read_parquet(p_path)
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+    return pd.DataFrame()
 
 
 # --- Main Dashboard ---
 st.title("📊 Cambodia International Trade & Transport Analytics")
 st.caption("Official Statistics from General Department of Customs and Excise of Cambodia (GDCE)")
 
-try:
-    df_transport = load_transport_data()
-    df_country = load_country_data()
-    df_sitc = load_sitc_data()
-    df_hs = load_hs_data()
-except Exception as e:
-    st.error(f"Failed to connect to Data Warehouse: {e}")
-    st.stop()
+df_transport = load_transport_data()
+df_country = load_country_data()
+df_sitc = load_sitc_data()
+df_hs = load_hs_data()
 
 if df_transport.empty:
-    st.warning("Data Warehouse is currently empty. Run the Airflow ETL pipeline first.")
+    st.warning("Data Warehouse is currently empty or offline. Run the Airflow ETL pipeline or check data snapshots.")
     st.stop()
 
 # ==========================================
@@ -169,6 +221,10 @@ if df_transport.empty:
 # ==========================================
 st.sidebar.markdown("## 🧭 Analytics Control Hub")
 st.sidebar.caption("Executive Suite for Investors, Economists & Policy Makers")
+if get_engine() is not None:
+    st.sidebar.success("🟢 Live DW Connected (PostgreSQL)", icon="📡")
+else:
+    st.sidebar.info("📦 GDCE Verified Snapshot Active", icon="💾")
 
 # 1. Geopolitical & FTA Economic Blocs
 st.sidebar.markdown("### 🌐 Trade Corridor / FTA Bloc")
