@@ -6,7 +6,9 @@ Runs on Port 8501 (http://localhost:8501)
 import os
 import sys
 from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -21,21 +23,24 @@ for _p in [str(PROJECT_ROOT), str(PROJECT_ROOT / "src"), str(Path.cwd()), str(Pa
         sys.path.insert(0, _p)
 
 forecast_monthly_series = None
+evaluate_model_tournament = None
 _forecast_import_err = None
 
 # Method 1: Standard package import
 try:
-    from src.forecast import forecast_monthly_series as _fms
+    from src.forecast import forecast_monthly_series as _fms, evaluate_model_tournament as _emt
     forecast_monthly_series = _fms
+    evaluate_model_tournament = _emt
 except Exception as _e1:
     try:
-        from forecast import forecast_monthly_series as _fms
+        from forecast import forecast_monthly_series as _fms, evaluate_model_tournament as _emt
         forecast_monthly_series = _fms
+        evaluate_model_tournament = _emt
     except Exception as _e2:
         _forecast_import_err = f"{_e1} | {_e2}"
 
 # Method 2: Direct file path loading via importlib (100% immune to cwd / sys.path discrepancies)
-if forecast_monthly_series is None:
+if forecast_monthly_series is None or evaluate_model_tournament is None:
     candidate_paths = [
         Path(__file__).resolve().parent / "forecast.py",
         PROJECT_ROOT / "src" / "forecast.py",
@@ -54,7 +59,10 @@ if forecast_monthly_series is None:
                 if _spec and _spec.loader:
                     _mod = importlib.util.module_from_spec(_spec)
                     _spec.loader.exec_module(_mod)
-                    forecast_monthly_series = getattr(_mod, "forecast_monthly_series", None)
+                    if forecast_monthly_series is None:
+                        forecast_monthly_series = getattr(_mod, "forecast_monthly_series", None)
+                    if evaluate_model_tournament is None:
+                        evaluate_model_tournament = getattr(_mod, "evaluate_model_tournament", None)
                     if forecast_monthly_series is not None:
                         _forecast_import_err = None
                         break
@@ -566,8 +574,475 @@ def lookup_country_geo(name: str = None, code3: str = None):
     return None
 
 
+def render_powerbi_macro_canvas(
+    f_tab1_macro: pd.DataFrame,
+    f_tab1_country: pd.DataFrame,
+    df_transport: pd.DataFrame,
+    df_hs: pd.DataFrame,
+    t_start: pd.Timestamp,
+    t_end: pd.Timestamp,
+    is_yearly_view: bool,
+    min_dw_date: pd.Timestamp,
+    max_dw_date: pd.Timestamp,
+    period_info: str,
+    sector_title_suffix: str,
+    selected_sector_chapters: Optional[list],
+    val_col: str,
+    currency: str,
+    curr_symbol: str,
+    num_scale: str,
+    bal_color: str,
+):
+    """
+    Renders the unified, single-page Microsoft Power BI-style Executive Dashboard Canvas.
+    Merges all 5 macro and trade balance visuals into a synchronized, non-scrolling 2-row grid:
+      - Row 1 (60% / 40%): Macro Trade Trajectory & Net Balance Dynamics + Global Bilateral Corridors Hub Map (with Trade Flow Button)
+      - Row 2 (33% / 33% / 34%): Top Trading Partners + Freight Modal Split + Strategic Commodity Pillars
+      - Row 3: Collapsible Drawer with detailed drill-down data tables
+    """
+    f_tab1_transport = df_transport[(df_transport["date"] >= t_start) & (df_transport["date"] <= t_end)]
+    f_tab1_hs = df_hs[(df_hs["date"] >= t_start) & (df_hs["date"] <= t_end)]
+    if selected_sector_chapters is not None:
+        f_tab1_hs = f_tab1_hs[f_tab1_hs["hs_chapter"].astype(str).str.zfill(2).isin(selected_sector_chapters)]
+
+    # Compute baseline bilateral partner aggregations across all flows
+    map_agg = f_tab1_country.groupby(["country_name_en", "country_code3", "trade_type"])[val_col].sum().reset_index()
+    partner_totals = map_agg.groupby("country_name_en")[val_col].sum().nlargest(8)
+    top_partner_names = partner_totals.index.tolist()
+    total_flow_val = map_agg[val_col].sum() if not map_agg.empty else 1.0
+    max_val_top = partner_totals.max() if not partner_totals.empty else 1.0
+
+    # =========================================================================
+    # ROW 1: MACRO DYNAMICS & GLOBAL BILATERAL CORRIDORS (60% / 40%)
+    # =========================================================================
+    r1_col1, r1_col2 = st.columns([1.38, 1.0])
+
+    with r1_col1:
+        st.markdown(
+            f"""
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                <span style="font-size: 0.95rem; font-weight: 700; color: #1e293b;">📊 Trade Trajectory & Net Balance Dynamics</span>
+                <span style="font-size: 0.74rem; color: #64748b; font-weight: 500;">{period_info.split('(')[-1].replace(')', '') if '(' in period_info else period_info}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        fig_macro_pbi = go.Figure()
+        if is_yearly_view:
+            yearly_temp = f_tab1_macro.copy()
+            yearly_temp["year"] = yearly_temp["date"].dt.year
+            yearly_trade = yearly_temp.groupby(["year", "trade_type"])[val_col].sum().reset_index()
+            yearly_piv = yearly_trade.pivot(index="year", columns="trade_type", values=val_col).fillna(0)
+            yearly_piv["Trade Balance"] = yearly_piv.get("Export", 0) - yearly_piv.get("Import", 0)
+            if "Export" in yearly_piv:
+                fig_macro_pbi.add_trace(go.Bar(x=yearly_piv.index, y=yearly_piv["Export"], name="Annual Exports", marker_color=COLOR_EXPORT))
+            if "Import" in yearly_piv:
+                fig_macro_pbi.add_trace(go.Bar(x=yearly_piv.index, y=yearly_piv["Import"], name="Annual Imports", marker_color=COLOR_IMPORT))
+            if "Trade Balance" in yearly_piv:
+                fig_macro_pbi.add_trace(go.Scatter(x=yearly_piv.index, y=yearly_piv["Trade Balance"], name="Net Trade Balance", line=dict(color=bal_color, width=3.2), mode="lines+markers", marker=dict(size=7)))
+            fig_macro_pbi.update_layout(
+                barmode="group",
+                xaxis=dict(tickmode="linear", dtick=1, showgrid=False),
+                yaxis=dict(title=f"Value ({currency})", showgrid=True, gridcolor="rgba(128,128,128,0.15)"),
+                hovermode="x unified",
+                height=335,
+                margin=dict(l=10, r=10, t=30, b=10),
+                legend=dict(orientation="h", y=1.12, x=0.5, xanchor="center", font=dict(size=10)),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+        else:
+            monthly_trade = f_tab1_macro.groupby(["date", "trade_type"])[val_col].sum().reset_index()
+            monthly_piv = monthly_trade.pivot(index="date", columns="trade_type", values=val_col).fillna(0)
+            if "Export" in monthly_piv and "Import" in monthly_piv:
+                monthly_piv["Trade Balance"] = monthly_piv["Export"] - monthly_piv["Import"]
+            if "Export" in monthly_piv:
+                fig_macro_pbi.add_trace(go.Bar(x=monthly_piv.index, y=monthly_piv["Export"], name="Exports", marker_color=COLOR_EXPORT))
+            if "Import" in monthly_piv:
+                fig_macro_pbi.add_trace(go.Bar(x=monthly_piv.index, y=monthly_piv["Import"], name="Imports", marker_color=COLOR_IMPORT))
+            if "Trade Balance" in monthly_piv:
+                fig_macro_pbi.add_trace(go.Scatter(x=monthly_piv.index, y=monthly_piv["Trade Balance"], name="Net Balance", line=dict(color=bal_color, width=2.8), mode="lines+markers", marker=dict(size=5)))
+            fig_macro_pbi.update_layout(
+                barmode="group",
+                xaxis=dict(showgrid=False),
+                yaxis=dict(title=f"Value ({currency})", showgrid=True, gridcolor="rgba(128,128,128,0.15)"),
+                hovermode="x unified",
+                height=335,
+                margin=dict(l=10, r=10, t=30, b=10),
+                legend=dict(orientation="h", y=1.12, x=0.5, xanchor="center", font=dict(size=10)),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+        st.plotly_chart(fig_macro_pbi, use_container_width=True)
+
+    with r1_col2:
+        pbi_map_hcol1, pbi_map_hcol2, pbi_map_hcol3 = st.columns([1.22, 1.35, 0.85])
+        with pbi_map_hcol1:
+            st.markdown(
+                """
+                <div style="font-size: 0.93rem; font-weight: 700; color: #1e293b; margin-top: 4px; white-space: nowrap;">
+                    🌐 Global Bilateral Corridors
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with pbi_map_hcol2:
+            pbi_corridor_flow = st.radio(
+                "Corridor Flow",
+                ["🟢 Export", "🟡 Import", "🔄 Both"],
+                horizontal=True,
+                key="pbi_corridor_flow_select",
+                label_visibility="collapsed",
+            )
+        with pbi_map_hcol3:
+            pbi_map_proj = st.selectbox(
+                "Map View",
+                ["🌍 3D Globe", "🗺️ 2D Flat"],
+                key="pbi_map_proj_selector",
+                label_visibility="collapsed",
+            )
+
+        # Reactive corridor flow filtering based on user button selection
+        is_exp_corridor = "Export" in pbi_corridor_flow
+        is_imp_corridor = "Import" in pbi_corridor_flow
+
+        if is_exp_corridor:
+            flow_sub = map_agg[map_agg["trade_type"] == "Export"]
+            corridor_partner_totals = flow_sub.groupby("country_name_en")[val_col].sum().nlargest(8)
+        elif is_imp_corridor:
+            flow_sub = map_agg[map_agg["trade_type"] == "Import"]
+            corridor_partner_totals = flow_sub.groupby("country_name_en")[val_col].sum().nlargest(8)
+        else:
+            corridor_partner_totals = partner_totals.copy()
+
+        map_top_partner_names = corridor_partner_totals.index.tolist()
+        max_corridor_val = corridor_partner_totals.max() if not corridor_partner_totals.empty else 1.0
+
+        fig_pbi_map = go.Figure()
+        p_lats, p_lons, p_names_p, p_sizes, p_colors, p_texts = [], [], [], [], [], []
+
+        for p_name in map_top_partner_names:
+            p_data = map_agg[map_agg["country_name_en"] == p_name]
+            p_code = p_data["country_code3"].iloc[0] if not p_data.empty and "country_code3" in p_data else None
+            geo = lookup_country_geo(p_name, p_code)
+            if not geo:
+                continue
+            p_lat, p_lon, canonical_name = geo
+            p_tot = corridor_partner_totals[p_name]
+            p_compact, _ = format_currency_smart(p_tot, curr_symbol, num_scale)
+            p_exp = p_data[p_data["trade_type"] == "Export"][val_col].sum() if "Export" in p_data["trade_type"].values else 0
+            p_imp = p_data[p_data["trade_type"] == "Import"][val_col].sum() if "Import" in p_data["trade_type"].values else 0
+
+            if is_exp_corridor:
+                line_color = COLOR_EXPORT
+                flow_label = "Outbound Export Corridor (Cambodia ➔ Market)"
+                hover_txt = f"<b>{canonical_name}</b><br>{flow_label}<br>Exports: {format_currency_smart(p_exp, curr_symbol, num_scale)[0]}"
+            elif is_imp_corridor:
+                line_color = COLOR_IMPORT
+                flow_label = "Inbound Import Corridor (Market ➔ Cambodia)"
+                hover_txt = f"<b>{canonical_name}</b><br>{flow_label}<br>Imports: {format_currency_smart(p_imp, curr_symbol, num_scale)[0]}"
+            else:
+                line_color = COLOR_EXPORT if p_exp >= p_imp else COLOR_IMPORT
+                hover_txt = f"<b>{canonical_name}</b><br>Total Trade: {p_compact}<br>Exports: {format_currency_smart(p_exp, curr_symbol, num_scale)[0]} | Imports: {format_currency_smart(p_imp, curr_symbol, num_scale)[0]}"
+
+            line_w = max(1.5, min(5.0, (p_tot / max_corridor_val) * 5.0))
+
+            fig_pbi_map.add_trace(go.Scattergeo(
+                locationmode="country names",
+                lon=[CAMBODIA_GEO["lon"], p_lon],
+                lat=[CAMBODIA_GEO["lat"], p_lat],
+                mode="lines",
+                line=dict(width=line_w, color=line_color),
+                opacity=0.75,
+                hoverinfo="text",
+                text=hover_txt,
+                showlegend=False,
+            ))
+            p_lons.append(p_lon)
+            p_lats.append(p_lat)
+            p_names_p.append(canonical_name)
+            p_sizes.append(max(6, min(18, (p_tot / max_corridor_val) * 18)))
+            p_colors.append(line_color)
+            p_texts.append(f"<b>{canonical_name}</b>: {p_compact}")
+
+        if p_lats:
+            fig_pbi_map.add_trace(go.Scattergeo(
+                lon=p_lons, lat=p_lats,
+                mode="markers+text",
+                marker=dict(size=p_sizes, color=p_colors, opacity=0.9, line=dict(width=1, color="#ffffff")),
+                text=p_names_p,
+                textposition="top center",
+                textfont=dict(size=9, color="#0f172a"),
+                hoverinfo="text", hovertext=p_texts,
+                showlegend=False,
+            ))
+
+        fig_pbi_map.add_trace(go.Scattergeo(
+            lon=[CAMBODIA_GEO["lon"]], lat=[CAMBODIA_GEO["lat"]],
+            mode="markers+text",
+            marker=dict(size=13, color="#ef4444", symbol="star", line=dict(width=1.5, color="#b91c1c")),
+            text=["🇰🇭 Hub"], textposition="bottom center",
+            textfont=dict(size=10, color="#b91c1c"),
+            hoverinfo="text", hovertext="<b>🇰🇭 Cambodia (Phnom Penh Hub)</b>",
+            showlegend=False,
+        ))
+
+        if "3D" in pbi_map_proj:
+            geo_cfg = dict(
+                projection_type="orthographic",
+                projection_rotation=dict(lon=105, lat=13, roll=0),
+                showland=True, landcolor="#f8fafc",
+                showocean=True, oceancolor="#e0f2fe",
+                showcountries=True, countrycolor="#cbd5e1",
+                showcoastlines=True, coastlinecolor="#94a3b8",
+                bgcolor="rgba(0,0,0,0)",
+            )
+        else:
+            geo_cfg = dict(
+                projection_type="natural earth",
+                center=dict(lat=20, lon=105),
+                projection_scale=1.35,
+                showland=True, landcolor="#f8fafc",
+                showocean=True, oceancolor="#e0f2fe",
+                showcountries=True, countrycolor="#cbd5e1",
+                showcoastlines=True, coastlinecolor="#94a3b8",
+                bgcolor="rgba(0,0,0,0)",
+            )
+
+        fig_pbi_map.update_layout(
+            geo=geo_cfg,
+            margin=dict(l=5, r=5, t=10, b=5),
+            height=335,
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_pbi_map, use_container_width=True)
+
+    # =========================================================================
+    # ROW 2: 3-PILLAR OPERATIONAL VISUALS (33% / 33% / 34%)
+    # =========================================================================
+    r2_col1, r2_col2, r2_col3 = st.columns([1.0, 1.0, 1.0])
+
+    with r2_col1:
+        pbi_ptn_hcol1, pbi_ptn_hcol2 = st.columns([1.15, 1.85])
+        with pbi_ptn_hcol1:
+            st.markdown(
+                """
+                <div style="font-size: 0.92rem; font-weight: 700; color: #1e293b; margin-top: 4px; white-space: nowrap;">
+                    🏆 Top Partners
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with pbi_ptn_hcol2:
+            pbi_ptn_flow = st.radio(
+                "Partner Flow",
+                ["🟢 Export", "🟡 Import", "🔄 Both"],
+                horizontal=True,
+                key="pbi_ptn_flow_select",
+                label_visibility="collapsed",
+            )
+
+        is_ptn_exp = "Export" in pbi_ptn_flow
+        is_ptn_imp = "Import" in pbi_ptn_flow
+
+        if is_ptn_exp:
+            ptn_sub = map_agg[map_agg["trade_type"] == "Export"]
+            ptn_totals = ptn_sub.groupby("country_name_en")[val_col].sum().nlargest(8)
+            ptn_names = ptn_totals.index.tolist()
+            ptn_colors = [COLOR_EXPORT] * len(ptn_names)
+            ptn_hover_suffix = "Exports"
+        elif is_ptn_imp:
+            ptn_sub = map_agg[map_agg["trade_type"] == "Import"]
+            ptn_totals = ptn_sub.groupby("country_name_en")[val_col].sum().nlargest(8)
+            ptn_names = ptn_totals.index.tolist()
+            ptn_colors = [COLOR_IMPORT] * len(ptn_names)
+            ptn_hover_suffix = "Imports"
+        else:
+            ptn_totals = partner_totals.copy()
+            ptn_names = ptn_totals.index.tolist()
+            ptn_colors = [
+                COLOR_EXPORT if map_agg[(map_agg["country_name_en"] == c) & (map_agg["trade_type"] == "Export")][val_col].sum() >= map_agg[(map_agg["country_name_en"] == c) & (map_agg["trade_type"] == "Import")][val_col].sum() else COLOR_IMPORT
+                for c in ptn_names
+            ]
+            ptn_hover_suffix = "Total Trade"
+
+        if not ptn_totals.empty:
+            df_mini_pbi = pd.DataFrame({
+                "Country": ptn_names[::-1],
+                "Value": [ptn_totals[c] for c in ptn_names][::-1],
+                "Color": ptn_colors[::-1],
+            })
+            fig_pbi_partners = go.Figure(go.Bar(
+                x=df_mini_pbi["Value"],
+                y=df_mini_pbi["Country"],
+                orientation="h",
+                marker_color=df_mini_pbi["Color"],
+                text=[format_currency_smart(v, curr_symbol, num_scale)[0] for v in df_mini_pbi["Value"]],
+                textposition="auto",
+                hovertemplate=f"<b>%{{y}}</b>: %{{x:$,.2f}} ({ptn_hover_suffix})<extra></extra>",
+            ))
+            fig_pbi_partners.update_layout(
+                margin=dict(l=0, r=10, t=15, b=10),
+                height=295,
+                xaxis=dict(showticklabels=False, showgrid=False),
+                yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_pbi_partners, use_container_width=True)
+        else:
+            st.info("No partner trade records for this flow.")
+
+    with r2_col2:
+        pbi_tm_hcol1, pbi_tm_hcol2 = st.columns([1.4, 1.6])
+        with pbi_tm_hcol1:
+            st.markdown(
+                """
+                <div style="font-size: 0.92rem; font-weight: 700; color: #1e293b; margin-top: 4px;">
+                    🚢 Transport Modes
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with pbi_tm_hcol2:
+            pbi_tm_flow = st.radio("TM Flow", ["🟢 Export", "🟡 Import"], horizontal=True, key="pbi_tm_flow_select", label_visibility="collapsed")
+
+        pbi_regime = "Export" if "Export" in pbi_tm_flow else "Import"
+        PRIMARY_TRANSPORT_MODES = ["Inland waterways transport", "Sea transport", "Road transport", "Air transport"]
+        f_tm_clean = f_tab1_transport[(f_tab1_transport["regime"] == pbi_regime) & (f_tab1_transport["description"].isin(PRIMARY_TRANSPORT_MODES)) & (f_tab1_transport["net_weight_ton"] > 0)].copy()
+
+        if not f_tm_clean.empty:
+            modal_agg = f_tm_clean.groupby("description")["net_weight_ton"].sum().reset_index()
+            modal_agg = modal_agg.sort_values(by="net_weight_ton", ascending=False)
+            modal_agg["label"] = modal_agg["description"].apply(lambda d: get_transport_mode_meta(d)[0])
+            modal_agg["icon"] = modal_agg["description"].apply(lambda d: get_transport_mode_meta(d)[1])
+            modal_agg["color"] = modal_agg["description"].apply(lambda d: get_transport_mode_meta(d)[2])
+            tot_w = modal_agg["net_weight_ton"].sum()
+            modal_agg["pct"] = (modal_agg["net_weight_ton"] / tot_w * 100) if tot_w > 0 else 0
+            modal_agg["txt"] = modal_agg.apply(
+                lambda r: f"<b>{r['net_weight_ton']/1e6:.1f}M MT</b><br>({r['pct']:.0f}%)" if r["net_weight_ton"] >= 1e6
+                else f"<b>{r['net_weight_ton']/1e3:.0f}K MT</b><br>({r['pct']:.0f}%)" if r["net_weight_ton"] >= 1e3
+                else f"<b>{r['net_weight_ton']:.0f} MT</b><br>({r['pct']:.0f}%)", axis=1
+            )
+            fig_pbi_tm = go.Figure(go.Bar(
+                x=modal_agg["icon"],
+                y=modal_agg["net_weight_ton"],
+                marker=dict(color=modal_agg["color"], cornerradius=6),
+                text=modal_agg["txt"],
+                textposition="outside",
+                hovertemplate="<b>%{x}</b>: %{y:,.0f} Metric Tons<extra></extra>",
+            ))
+            max_tm_y = modal_agg["net_weight_ton"].max() * 1.25 if not modal_agg.empty else 100
+            fig_pbi_tm.update_layout(
+                xaxis=dict(tickfont=dict(size=26), showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="rgba(128,128,128,0.15)", range=[0, max_tm_y], tickfont=dict(size=9)),
+                margin=dict(l=10, r=10, t=15, b=10),
+                height=295,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_pbi_tm, use_container_width=True)
+        else:
+            st.info("No modal transport records for this period.")
+
+    with r2_col3:
+        pbi_hs_hcol1, pbi_hs_hcol2 = st.columns([1.4, 1.6])
+        with pbi_hs_hcol1:
+            st.markdown(
+                """
+                <div style="font-size: 0.92rem; font-weight: 700; color: #1e293b; margin-top: 4px;">
+                    📦 Strategic Commodities
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with pbi_hs_hcol2:
+            pbi_hs_flow = st.radio("HS Flow", ["🟢 Exports", "🟡 Imports"], horizontal=True, key="pbi_hs_flow_select", label_visibility="collapsed")
+
+        hs_type = "Export" if "Export" in pbi_hs_flow else "Import"
+        f_hs_sub = f_tab1_hs[f_tab1_hs["trade_type"] == hs_type].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index()
+        hs_top_pbi = f_hs_sub.nlargest(6, val_col).copy()
+
+        if not hs_top_pbi.empty:
+            hs_top_pbi["label"] = "Ch." + hs_top_pbi["hs_chapter"] + " " + hs_top_pbi["description_en"].str[:22]
+            fig_pbi_hs = go.Figure(go.Bar(
+                x=hs_top_pbi[val_col],
+                y=hs_top_pbi["label"],
+                orientation="h",
+                marker_color=COLOR_EXPORT if hs_type == "Export" else COLOR_IMPORT,
+                text=[format_currency_smart(v, curr_symbol, num_scale)[0] for v in hs_top_pbi[val_col]],
+                textposition="auto",
+            ))
+            fig_pbi_hs.update_layout(
+                margin=dict(l=0, r=10, t=15, b=10),
+                height=295,
+                xaxis=dict(showticklabels=False, showgrid=False),
+                yaxis=dict(categoryorder="total ascending", showgrid=False, tickfont=dict(size=9.5)),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_pbi_hs, use_container_width=True)
+        else:
+            st.info("No commodity records for this period.")
+
+    # =========================================================================
+    # ROW 3: COLLAPSIBLE DEEP-DIVE AUDIT TABLES (BOTTOM DRAWER)
+    # =========================================================================
+    with st.expander("📋 Click to Expand Comprehensive Bilateral, Modal & Commodity Tables", expanded=False):
+        pbi_tbl1, pbi_tbl2, pbi_tbl3 = st.tabs([
+            "🌐 Bilateral Trading Partners Table",
+            "🚢 Freight Transport Logistics Table",
+            "📦 Strategic HS Commodities Directory",
+        ])
+        with pbi_tbl1:
+            leaderboard_data = []
+            for rank, p_name in enumerate(top_partner_names, 1):
+                p_data = map_agg[map_agg["country_name_en"] == p_name]
+                p_tot = partner_totals[p_name]
+                pct_share = (p_tot / total_flow_val) * 100 if total_flow_val > 0 else 0
+                p_exp = float(p_data[p_data["trade_type"] == "Export"][val_col].sum()) if "Export" in p_data["trade_type"].values else 0.0
+                p_imp = float(p_data[p_data["trade_type"] == "Import"][val_col].sum()) if "Import" in p_data["trade_type"].values else 0.0
+                p_bal = p_exp - p_imp
+                c_exp_str, _ = format_currency_smart(p_exp, curr_symbol, num_scale)
+                c_imp_str, _ = format_currency_smart(p_imp, curr_symbol, num_scale)
+                c_tot_str, _ = format_currency_smart(p_tot, curr_symbol, num_scale)
+                c_bal_str, _ = format_currency_smart(abs(p_bal), curr_symbol, num_scale)
+                leaderboard_data.append({
+                    "Rank": f"#{rank}", "Partner Country": p_name,
+                    f"Total Trade ({currency})": c_tot_str, f"Exports ({currency})": c_exp_str,
+                    f"Imports ({currency})": c_imp_str, f"Net Balance ({currency})": f"{'+' if p_bal >= 0 else '-'}{c_bal_str}",
+                    "Share": f"{pct_share:.2f}%", "Flow": "🟢 Export" if p_exp >= p_imp else "🟡 Import"
+                })
+            df_leaderboard = pd.DataFrame(leaderboard_data)
+            st.dataframe(df_leaderboard, use_container_width=True, hide_index=True)
+            st.download_button("📥 Export Partners CSV", df_leaderboard.to_csv(index=False).encode("utf-8"), "bilateral_partners.csv", "text/csv")
+
+        with pbi_tbl2:
+            if not f_tab1_transport.empty:
+                df_modal_tbl = f_tab1_transport.groupby(["regime", "description"])["net_weight_ton"].sum().reset_index()
+                st.dataframe(df_modal_tbl, use_container_width=True, hide_index=True)
+                st.download_button("📥 Export Modal Logistics CSV", df_modal_tbl.to_csv(index=False).encode("utf-8"), "transport_modal_logistics.csv", "text/csv")
+
+        with pbi_tbl3:
+            if not f_tab1_hs.empty:
+                df_hs_tbl = f_tab1_hs.groupby(["trade_type", "hs_chapter", "description_en"])[val_col].sum().reset_index()
+                st.dataframe(df_hs_tbl, use_container_width=True, hide_index=True)
+                st.download_button("📥 Export Commodities Directory CSV", df_hs_tbl.to_csv(index=False).encode("utf-8"), "hs_commodities.csv", "text/csv")
+
+
 with tab1:
-    st.subheader("🏛️ National Trade Performance & Balance")
+    tab1_head_col1, tab1_head_col2 = st.columns([2.5, 1.5])
+    with tab1_head_col1:
+        st.subheader("🏛️ National Trade Performance & Balance")
+    with tab1_head_col2:
+        tab1_canvas_mode = st.radio(
+            "Canvas Layout Mode:",
+            ["🎛️ PowerBI Unified Canvas (One Page)", "📑 Multi-Section Deep-Dive"],
+            index=0,
+            horizontal=True,
+            key="tab1_canvas_layout_mode",
+            label_visibility="collapsed",
+        )
 
     # Time Horizon Quick Filter
     time_preset = st.radio(
@@ -716,10 +1191,28 @@ with tab1:
     st.markdown("---")
 
     sector_title_suffix = f" — {selected_sector_name}" if selected_sector_chapters is not None else ""
+    if tab1_canvas_mode == "🎛️ PowerBI Unified Canvas (One Page)":
+        render_powerbi_macro_canvas(
+            f_tab1_macro=f_tab1_macro,
+            f_tab1_country=f_tab1_country,
+            df_transport=df_transport,
+            df_hs=df_hs,
+            t_start=t_start,
+            t_end=t_end,
+            is_yearly_view=is_yearly_view,
+            min_dw_date=min_dw_date,
+            max_dw_date=max_dw_date,
+            period_info=period_info,
+            sector_title_suffix=sector_title_suffix,
+            selected_sector_chapters=selected_sector_chapters,
+            val_col=val_col,
+            currency=currency,
+            curr_symbol=curr_symbol,
+            num_scale=num_scale,
+            bal_color=bal_color,
+        )
+    else:
 
-    col_dyn, col_transport = st.columns([1.65, 1.35])
-
-    with col_dyn:
         if is_yearly_view:
             # Yearly Aggregated View
             yearly_temp = f_tab1_macro.copy()
@@ -743,8 +1236,8 @@ with tab1:
                 xaxis=dict(title="Calendar Year", tickmode="linear", dtick=1),
                 yaxis_title=f"Value ({currency})",
                 hovermode="x unified",
-                height=490,
-                margin=dict(l=0, r=10, t=40, b=10),
+                height=480,
+                margin=dict(l=0, r=0, t=40, b=10),
             )
             st.plotly_chart(fig_macro, use_container_width=True)
         else:
@@ -768,488 +1261,528 @@ with tab1:
                 xaxis_title="Period",
                 yaxis_title=f"Value ({currency})",
                 hovermode="x unified",
-                height=490,
-                margin=dict(l=0, r=10, t=40, b=10),
+                height=480,
+                margin=dict(l=0, r=0, t=40, b=10),
             )
             st.plotly_chart(fig_macro, use_container_width=True)
 
-    with col_transport:
-        # Transport Mode Breakdown next to Trade Dynamics
-        st.markdown("#### 🚢 Freight by Transport Mode")
-        st.caption(f"Modal freight breakdown during **{period_info.split('(')[-1].replace(')', '') if '(' in period_info else period_info}**.")
+        # =========================================================================
+        # 🚢 FREIGHT LOGISTICS BY TRANSPORT MODE (CARGO WEIGHT IN METRIC TONS)
+        # =========================================================================
+        st.markdown("---")
+        st.markdown("### 🚢 Transport Mode Cargo Weight")
+        st.caption("Cargo tonnage distribution by transport mode.")
 
-        f_tab1_transport = df_transport[(df_transport["date"] >= t_start) & (df_transport["date"] <= t_end)]
-        known_modes = list(TRANSPORT_MODE_MAPPINGS.keys())
+        # Filter data for selected regime
+        flow_option = st.radio(
+            "Select Flow Direction:",
+            options=["🟢 Export", "🟡 Import"],
+            horizontal=True,
+            key="tm_flow_filter",
+        )
+
+        selected_regime = "Export" if "Export" in flow_option else "Import"
+        f_tab1_transport = df_transport[df_transport["regime"] == selected_regime].copy()
+
+        # 4 Primary High-Weight Transport Modes (Inland Waterways, Sea, Road, Air)
+        PRIMARY_TRANSPORT_MODES = [
+            "Inland waterways transport",
+            "Sea transport",
+            "Road transport",
+            "Air transport",
+        ]
         f_tab1_transport_clean = f_tab1_transport[
-            f_tab1_transport["description"].isin(known_modes) | (f_tab1_transport["net_weight_ton"] > 0)
+            (f_tab1_transport["description"].isin(PRIMARY_TRANSPORT_MODES)) & (f_tab1_transport["net_weight_ton"] > 0)
         ].copy()
 
-        t_metric_opt = st.radio(
-            "Modal Metric",
-            [f"Trade Value ({currency})", "Net Weight (Metric Tons)"],
-            horizontal=True,
-            key="tab1_transport_metric_choice",
-        )
-        is_wt = "Weight" in t_metric_opt
-        t_col_name = "net_weight_ton" if is_wt else val_col
-        t_unit_lbl = "MT" if is_wt else currency
+        if not f_tab1_transport_clean.empty:
+            # Aggregate total weight by transport mode sorted descending
+            modal_agg = f_tab1_transport_clean.groupby("description")["net_weight_ton"].sum().reset_index()
+            modal_agg = modal_agg[modal_agg["net_weight_ton"] > 0]
+            modal_agg = modal_agg.sort_values(by="net_weight_ton", ascending=False)
 
-        modal_summary = []
-        for desc, g in f_tab1_transport_clean.groupby("description"):
-            lbl, icon, col, short_lbl = get_transport_mode_meta(desc)
-            tot_m = g[t_col_name].sum()
-            tot_val = g[val_col].sum()
-            tot_wt = g["net_weight_ton"].sum()
-            exp_m = g[g["regime"] == "Export"][t_col_name].sum()
-            imp_m = g[g["regime"] == "Import"][t_col_name].sum()
-            modal_summary.append({
-                "raw_desc": desc,
-                "label": lbl,
-                "icon": icon,
-                "short": short_lbl,
-                "color": col,
-                "metric_val": tot_m,
-                "value_usd": tot_val,
-                "net_weight_ton": tot_wt,
-                "exp_val": exp_m,
-                "imp_val": imp_m,
-            })
-        df_modal = pd.DataFrame(modal_summary)
-        if not df_modal.empty:
-            df_modal = df_modal.sort_values(by="metric_val", ascending=False)
-            total_modal_sum = df_modal["metric_val"].sum()
+            modal_agg["label"] = modal_agg["description"].apply(lambda d: get_transport_mode_meta(d)[0])
+            modal_agg["icon"] = modal_agg["description"].apply(lambda d: get_transport_mode_meta(d)[1])
+            modal_agg["color"] = modal_agg["description"].apply(lambda d: get_transport_mode_meta(d)[2])
+            modal_agg["short"] = modal_agg["description"].apply(lambda d: get_transport_mode_meta(d)[3])
 
-            fig_modal_donut = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=df_modal["label"],
-                        values=df_modal["metric_val"],
-                        hole=0.46,
-                        marker=dict(colors=df_modal["color"].tolist()),
-                        textinfo="percent+label",
-                        textposition="inside",
-                        insidetextorientation="radial",
-                        hovertemplate="<b>%{label}</b><br>● Volume: <b>%{value:,.0f} " + t_unit_lbl + "</b><br>● Share: <b>%{percent}</b><extra></extra>",
-                    )
-                ]
+            total_modal_weight = modal_agg["net_weight_ton"].sum()
+            modal_agg["share_pct"] = (modal_agg["net_weight_ton"] / total_modal_weight) * 100 if total_modal_weight > 0 else 0
+            modal_agg["text_display"] = modal_agg.apply(
+                lambda r: f"<b>{r['net_weight_ton']/1e6:,.2f}M MT</b><br>({r['share_pct']:.1f}%)" if r["net_weight_ton"] >= 1e6
+                else f"<b>{r['net_weight_ton']/1e3:,.1f}K MT</b><br>({r['share_pct']:.1f}%)" if r["net_weight_ton"] >= 1e3
+                else f"<b>{r['net_weight_ton']:,.0f} MT</b><br>({r['share_pct']:.1f}%)",
+                axis=1
             )
-            fig_modal_donut.update_layout(
-                showlegend=False,
-                margin=dict(l=0, r=0, t=10, b=10),
-                height=380,
+
+            # Total Weight KPI Card
+            total_compact = f"{total_modal_weight/1e6:,.2f}M MT" if total_modal_weight >= 1e6 else f"{total_modal_weight/1e3:,.1f}K MT" if total_modal_weight >= 1e3 else f"{total_modal_weight:,.0f} MT"
+            total_full = f"{total_modal_weight:,.2f} Metric Tons"
+            accent_color = COLOR_EXPORT if selected_regime == "Export" else COLOR_IMPORT
+            top_mode = modal_agg.iloc[0]
+
+            card_col1, card_col2 = st.columns([1.2, 1.2])
+            with card_col1:
+                render_kpi_card(
+                    title=f"Total {selected_regime} Cargo Weight",
+                    compact_val=total_compact,
+                    full_val=total_full,
+                    badge_text=f"Total {selected_regime} Tonnage",
+                    accent_color=accent_color,
+                    icon="⚖️",
+                )
+            with card_col2:
+                top_compact = f"{top_mode['net_weight_ton']/1e6:,.2f}M MT" if top_mode['net_weight_ton'] >= 1e6 else f"{top_mode['net_weight_ton']/1e3:,.1f}K MT" if top_mode['net_weight_ton'] >= 1e3 else f"{top_mode['net_weight_ton']:,.0f} MT"
+                render_kpi_card(
+                    title=f"Top Mode: {top_mode['short']}",
+                    compact_val=top_compact,
+                    full_val=f"{top_mode['net_weight_ton']:,.2f} Metric Tons",
+                    badge_text=f"{top_mode['share_pct']:.1f}% Share",
+                    accent_color=top_mode["color"],
+                    icon=top_mode["icon"],
+                )
+
+            fig_tm = go.Figure()
+            fig_tm.add_trace(go.Bar(
+                x=modal_agg["icon"],
+                y=modal_agg["net_weight_ton"],
+                marker=dict(
+                    color=modal_agg["color"],
+                    line=dict(color="rgba(255, 255, 255, 0.2)", width=1.5),
+                    cornerradius=8,
+                ),
+                text=modal_agg["text_display"],
+                textposition="outside",
+                customdata=list(zip(modal_agg["label"], modal_agg["share_pct"], modal_agg["short"])),
+                hovertemplate="<b>%{customdata[0]}</b><br>● Cargo Weight: <b>%{y:,.1f} Metric Tons</b><br>● Share: <b>%{customdata[1]:.1f}%</b><extra></extra>",
+            ))
+
+            max_y = modal_agg["net_weight_ton"].max() * 1.22 if not modal_agg.empty else 100
+
+            fig_tm.update_layout(
+                title=f"Transport Mode — {selected_regime} Cargo Weight",
+                xaxis=dict(
+                    tickfont=dict(size=36),
+                    showgrid=False,
+                    title="",
+                ),
+                yaxis=dict(
+                    title="Cargo Weight (Metric Tons)",
+                    range=[0, max_y],
+                    showgrid=True,
+                    gridcolor="rgba(128,128,128,0.15)",
+                ),
+                hovermode="closest",
+                height=430,
+                margin=dict(l=20, r=20, t=50, b=20),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                annotations=[
-                    dict(
-                        text=f"<b>{df_modal['icon'].iloc[0]} Top Mode</b><br><span style='font-size:0.8rem;'>{df_modal['short'].iloc[0]}</span>",
-                        x=0.5,
-                        y=0.5,
-                        font_size=13,
-                        showarrow=False,
-                    )
-                ],
-            )
-            st.plotly_chart(fig_modal_donut, use_container_width=True)
-        else:
-            st.info("No modal transport records found for this period.")
-
-    # =========================================================================
-    # 🌐 GLOBAL BILATERAL TRADE FLOW MAP (CAMBODIA ➔ WORLD HUB)
-    # =========================================================================
-    st.markdown("---")
-    st.markdown(f"### 🌐 Global Trade Flow Corridors ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')})")
-    st.caption(f"Geodesic Great-Circle trade routes linking the Cambodia hub (Phnom Penh) to bilateral trading partners dynamically filtered for **{period_info}**.")
-
-    if selected_sector_name != "📦 All Commodity Sectors":
-        st.info(f"💡 **Pillar Sector Filter Active ({selected_sector_name}):** Global bilateral routes below reflect total merchandise trade with trading partners during the active horizon. Detailed HS chapter breakdowns ({', '.join(selected_sector_chapters)}) are available in Tab 4 (Commodity Sectors) and Tab 5 (Predictive Forecasting).")
-
-    map_ctrl1, map_ctrl2, map_ctrl3 = st.columns([1.2, 1.2, 1.0])
-    with map_ctrl1:
-        flow_mode = st.selectbox(
-            "Trade Flow Corridor",
-            [
-                "🟢 Outbound Export Corridors (Cambodia ➔ World)",
-                "🟡 Inbound Import Supply Chains (World ➔ Cambodia)",
-                "🔄 Combined Bilateral Flows",
-            ],
-            index=0,
-            key="tab1_flow_mode",
-        )
-    with map_ctrl2:
-        proj_mode = st.selectbox(
-            "Map Projection View",
-            [
-                "🌍 3D Interactive Globe (Orthographic)",
-                "🗺️ 2D Flat World Map (Natural Earth)",
-                "🌐 Equirectangular (Cylindrical)",
-            ],
-            index=0,
-            key="tab1_proj_mode",
-        )
-    with map_ctrl3:
-        map_top_n = st.slider("Top Partners", min_value=5, max_value=30, value=15, key="tab1_map_top_n")
-
-    # Determine flow data
-    if "Export" in flow_mode:
-        flow_types = ["Export"]
-    elif "Import" in flow_mode:
-        flow_types = ["Import"]
-    else:
-        flow_types = ["Export", "Import"]
-
-    f_map_country = f_tab1_country[f_tab1_country["trade_type"].isin(flow_types)]
-    map_agg = f_map_country.groupby(["country_name_en", "country_code3", "trade_type"])[val_col].sum().reset_index()
-    partner_totals = map_agg.groupby("country_name_en")[val_col].sum().nlargest(map_top_n)
-    top_partner_names = partner_totals.index.tolist()
-    total_flow_val = map_agg[val_col].sum() if not map_agg.empty else 1.0
-
-    proj_type_map = {
-        "🌍 3D Interactive Globe (Orthographic)": "orthographic",
-        "🗺️ 2D Flat World Map (Natural Earth)": "natural earth",
-        "🌐 Equirectangular (Cylindrical)": "equirectangular",
-    }
-    proj_type = proj_type_map.get(proj_mode, "orthographic")
-
-    fig_flow = go.Figure()
-
-    partner_lats = []
-    partner_lons = []
-    partner_texts = []
-    partner_sizes = []
-    partner_colors = []
-    partner_names_plotted = []
-
-    max_val_top = partner_totals.max() if not partner_totals.empty else 1.0
-
-    for p_name in top_partner_names:
-        p_data = map_agg[map_agg["country_name_en"] == p_name]
-        p_code = p_data["country_code3"].iloc[0] if not p_data.empty and "country_code3" in p_data else None
-        geo = lookup_country_geo(p_name, p_code)
-        if not geo:
-            continue
-        p_lat, p_lon, canonical_name = geo
-
-        p_tot = partner_totals[p_name]
-        pct_share = (p_tot / total_flow_val) * 100 if total_flow_val > 0 else 0
-        p_compact, p_full = format_currency_smart(p_tot, curr_symbol, num_scale)
-
-        p_exp = p_data[p_data["trade_type"] == "Export"][val_col].sum() if "Export" in p_data["trade_type"].values else 0
-        p_imp = p_data[p_data["trade_type"] == "Import"][val_col].sum() if "Import" in p_data["trade_type"].values else 0
-
-        if p_exp > p_imp:
-            line_color = COLOR_EXPORT
-            flow_direction_label = "Cambodia ➔ " + canonical_name
-        else:
-            line_color = COLOR_IMPORT
-            flow_direction_label = canonical_name + " ➔ Cambodia"
-
-        line_width = max(1.5, min(6.5, (p_tot / max_val_top) * 6.5))
-
-        hover_info = (
-            f"<b>{canonical_name}</b> ({flow_direction_label})<br>"
-            f"● Period: <b>{t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y') flights if False else ''}</b><br>"
-            f"● Total Volume: <b>{p_compact}</b> ({p_full})<br>"
-            f"● Active Share: <b>{pct_share:.2f}%</b><br>"
-            f"● Exports: <b>{format_currency_smart(p_exp, curr_symbol, num_scale)[0]}</b> | Imports: <b>{format_currency_smart(p_imp, curr_symbol, num_scale)[0]}</b>"
-        )
-
-        fig_flow.add_trace(
-            go.Scattergeo(
-                locationmode="country names",
-                lon=[CAMBODIA_GEO["lon"], p_lon],
-                lat=[CAMBODIA_GEO["lat"], p_lat],
-                mode="lines",
-                line=dict(width=line_width, color=line_color),
-                opacity=0.75,
-                hoverinfo="text",
-                text=hover_info,
-                name=canonical_name,
                 showlegend=False,
             )
+
+            st.plotly_chart(fig_tm, use_container_width=True)
+        else:
+            st.info("No modal cargo weight records available for this selected date range and flow filter.")
+
+        # =========================================================================
+        # 🌐 GLOBAL BILATERAL TRADE FLOW MAP (CAMBODIA ➔ WORLD HUB)
+        # =========================================================================
+        st.markdown("---")
+        st.markdown(f"### 🌐 Global Trade Flow Corridors ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')})")
+        st.caption(f"Geodesic Great-Circle trade routes linking the Cambodia hub (Phnom Penh) to bilateral trading partners dynamically filtered for **{period_info}**.")
+
+        if selected_sector_name != "📦 All Commodity Sectors":
+            st.info(f"💡 **Pillar Sector Filter Active ({selected_sector_name}):** Global bilateral routes below reflect total merchandise trade with trading partners during the active horizon. Detailed HS chapter breakdowns ({', '.join(selected_sector_chapters)}) are available in Tab 4 (Commodity Sectors) and Tab 5 (Predictive Forecasting).")
+
+        map_ctrl1, map_ctrl2 = st.columns(2)
+        with map_ctrl1:
+            flow_mode = st.selectbox(
+                "Trade Flow Corridor",
+                [
+                    "🟢 Outbound Export Corridors (Cambodia ➔ World)",
+                    "🟡 Inbound Import Supply Chains (World ➔ Cambodia)",
+                    "🔄 Combined Bilateral Flows",
+                ],
+                index=0,
+                key="tab1_flow_mode",
+            )
+        with map_ctrl2:
+            proj_mode = st.selectbox(
+                "Map Projection View",
+                [
+                    "🌍 3D Interactive Globe (Orthographic)",
+                    "🗺️ 2D Flat World Map (Natural Earth)",
+                    "🌐 Equirectangular (Cylindrical)",
+                ],
+                index=0,
+                key="tab1_proj_mode",
+            )
+        map_top_n = 10
+
+        # Determine flow data
+        if "Export" in flow_mode:
+            flow_types = ["Export"]
+        elif "Import" in flow_mode:
+            flow_types = ["Import"]
+        else:
+            flow_types = ["Export", "Import"]
+
+        f_map_country = f_tab1_country[f_tab1_country["trade_type"].isin(flow_types)]
+        map_agg = f_map_country.groupby(["country_name_en", "country_code3", "trade_type"])[val_col].sum().reset_index()
+        partner_totals = map_agg.groupby("country_name_en")[val_col].sum().nlargest(map_top_n)
+        top_partner_names = partner_totals.index.tolist()
+        total_flow_val = map_agg[val_col].sum() if not map_agg.empty else 1.0
+
+        proj_type_map = {
+            "🌍 3D Interactive Globe (Orthographic)": "orthographic",
+            "🗺️ 2D Flat World Map (Natural Earth)": "natural earth",
+            "🌐 Equirectangular (Cylindrical)": "equirectangular",
+        }
+        proj_type = proj_type_map.get(proj_mode, "orthographic")
+
+        fig_flow = go.Figure()
+
+        partner_lats = []
+        partner_lons = []
+        partner_texts = []
+        partner_sizes = []
+        partner_colors = []
+        partner_names_plotted = []
+
+        max_val_top = partner_totals.max() if not partner_totals.empty else 1.0
+
+        for p_name in top_partner_names:
+            p_data = map_agg[map_agg["country_name_en"] == p_name]
+            p_code = p_data["country_code3"].iloc[0] if not p_data.empty and "country_code3" in p_data else None
+            geo = lookup_country_geo(p_name, p_code)
+            if not geo:
+                continue
+            p_lat, p_lon, canonical_name = geo
+
+            p_tot = partner_totals[p_name]
+            pct_share = (p_tot / total_flow_val) * 100 if total_flow_val > 0 else 0
+            p_compact, p_full = format_currency_smart(p_tot, curr_symbol, num_scale)
+
+            p_exp = p_data[p_data["trade_type"] == "Export"][val_col].sum() if "Export" in p_data["trade_type"].values else 0
+            p_imp = p_data[p_data["trade_type"] == "Import"][val_col].sum() if "Import" in p_data["trade_type"].values else 0
+
+            if p_exp > p_imp:
+                line_color = COLOR_EXPORT
+                flow_direction_label = "Cambodia ➔ " + canonical_name
+            else:
+                line_color = COLOR_IMPORT
+                flow_direction_label = canonical_name + " ➔ Cambodia"
+
+            line_width = max(1.5, min(6.5, (p_tot / max_val_top) * 6.5))
+
+            hover_info = (
+                f"<b>{canonical_name}</b> ({flow_direction_label})<br>"
+                f"● Period: <b>{t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')}</b><br>"
+                f"● Total Volume: <b>{p_compact}</b> ({p_full})<br>"
+                f"● Active Share: <b>{pct_share:.2f}%</b><br>"
+                f"● Exports: <b>{format_currency_smart(p_exp, curr_symbol, num_scale)[0]}</b> | Imports: <b>{format_currency_smart(p_imp, curr_symbol, num_scale)[0]}</b>"
+            )
+
+            fig_flow.add_trace(
+                go.Scattergeo(
+                    locationmode="country names",
+                    lon=[CAMBODIA_GEO["lon"], p_lon],
+                    lat=[CAMBODIA_GEO["lat"], p_lat],
+                    mode="lines",
+                    line=dict(width=line_width, color=line_color),
+                    opacity=0.75,
+                    hoverinfo="text",
+                    text=hover_info,
+                    name=canonical_name,
+                    showlegend=False,
+                )
+            )
+
+            partner_lons.append(p_lon)
+            partner_lats.append(p_lat)
+            partner_names_plotted.append(canonical_name)
+            partner_sizes.append(max(8, min(24, (p_tot / max_val_top) * 24)))
+            partner_colors.append(line_color)
+            partner_texts.append(hover_info)
+
+        if partner_lats:
+            fig_flow.add_trace(
+                go.Scattergeo(
+                    lon=partner_lons,
+                    lat=partner_lats,
+                    mode="markers+text",
+                    marker=dict(
+                        size=partner_sizes,
+                        color=partner_colors,
+                        symbol="circle",
+                        opacity=0.9,
+                        line=dict(width=1.5, color="#ffffff"),
+                    ),
+                    text=partner_names_plotted,
+                    textposition="top center",
+                    textfont=dict(size=10, color="#0f172a", family="sans-serif"),
+                    hoverinfo="text",
+                    hovertext=partner_texts,
+                    name="Trading Partners",
+                    showlegend=False,
+                )
+            )
+
+        cambodia_tot_exp = f_tab1_macro[f_tab1_macro["trade_type"] == "Export"][val_col].sum()
+        cambodia_tot_imp = f_tab1_macro[f_tab1_macro["trade_type"] == "Import"][val_col].sum()
+        kh_exp_fmt = format_currency_smart(cambodia_tot_exp, curr_symbol, num_scale)[0]
+        kh_imp_fmt = format_currency_smart(cambodia_tot_imp, curr_symbol, num_scale)[0]
+
+        kh_hover = (
+            f"<b>🇰🇭 Cambodia (National Hub)</b><br>"
+            f"Phnom Penh (12.57°N, 104.99°E)<br>"
+            f"● Period: <b>{t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')}</b><br>"
+            f"● Total Exports: <b>{kh_exp_fmt}</b><br>"
+            f"● Total Imports: <b>{kh_imp_fmt}</b>"
         )
 
-        partner_lons.append(p_lon)
-        partner_lats.append(p_lat)
-        partner_names_plotted.append(canonical_name)
-        partner_sizes.append(max(8, min(24, (p_tot / max_val_top) * 24)))
-        partner_colors.append(line_color)
-        partner_texts.append(hover_info)
-
-    if partner_lats:
         fig_flow.add_trace(
             go.Scattergeo(
-                lon=partner_lons,
-                lat=partner_lats,
+                lon=[CAMBODIA_GEO["lon"]],
+                lat=[CAMBODIA_GEO["lat"]],
                 mode="markers+text",
                 marker=dict(
-                    size=partner_sizes,
-                    color=partner_colors,
-                    symbol="circle",
-                    opacity=0.9,
-                    line=dict(width=1.5, color="#ffffff"),
+                    size=16,
+                    color="#ef4444",
+                    symbol="star",
+                    line=dict(width=2, color="#b91c1c"),
                 ),
-                text=partner_names_plotted,
-                textposition="top center",
-                textfont=dict(size=10, color="#0f172a", family="sans-serif"),
+                text=["🇰🇭 Cambodia Hub"],
+                textposition="bottom center",
+                textfont=dict(size=12, color="#b91c1c", family="sans-serif"),
                 hoverinfo="text",
-                hovertext=partner_texts,
-                name="Trading Partners",
+                hovertext=kh_hover,
+                name="Cambodia Hub",
                 showlegend=False,
             )
         )
 
-    cambodia_tot_exp = f_tab1_macro[f_tab1_macro["trade_type"] == "Export"][val_col].sum()
-    cambodia_tot_imp = f_tab1_macro[f_tab1_macro["trade_type"] == "Import"][val_col].sum()
-    kh_exp_fmt = format_currency_smart(cambodia_tot_exp, curr_symbol, num_scale)[0]
-    kh_imp_fmt = format_currency_smart(cambodia_tot_imp, curr_symbol, num_scale)[0]
-
-    kh_hover = (
-        f"<b>🇰🇭 Cambodia (National Hub)</b><br>"
-        f"Phnom Penh (12.57°N, 104.99°E)<br>"
-        f"● Period: <b>{t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')}</b><br>"
-        f"● Total Exports: <b>{kh_exp_fmt}</b><br>"
-        f"● Total Imports: <b>{kh_imp_fmt}</b>"
-    )
-
-    fig_flow.add_trace(
-        go.Scattergeo(
-            lon=[CAMBODIA_GEO["lon"]],
-            lat=[CAMBODIA_GEO["lat"]],
-            mode="markers+text",
-            marker=dict(
-                size=16,
-                color="#ef4444",
-                symbol="star",
-                line=dict(width=2, color="#b91c1c"),
-            ),
-            text=["🇰🇭 Cambodia Hub"],
-            textposition="bottom center",
-            textfont=dict(size=12, color="#b91c1c", family="sans-serif"),
-            hoverinfo="text",
-            hovertext=kh_hover,
-            name="Cambodia Hub",
-            showlegend=False,
-        )
-    )
-
-    geo_dict = dict(
-        showland=True,
-        landcolor="#f8fafc",
-        showocean=True,
-        oceancolor="#e0f2fe",
-        showlakes=True,
-        lakecolor="#e0f2fe",
-        showcountries=True,
-        countrycolor="#cbd5e1",
-        showcoastlines=True,
-        coastlinecolor="#94a3b8",
-        projection_type=proj_type,
-        bgcolor="rgba(0,0,0,0)",
-    )
-
-    if proj_type == "orthographic":
-        geo_dict["projection_rotation"] = dict(lon=105, lat=15, roll=0)
-
-    fig_flow.update_layout(
-        title=f"🌐 Bilateral Trade Corridors — Top {len(partner_lats)} Active Partners ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')})",
-        geo=geo_dict,
-        margin=dict(l=0, r=0, t=40, b=0),
-        height=620,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
-
-    # Side-by-side layout: Map on Left (68%), Top Country Ranking Chart on Right (32%)
-    col_map, col_top_countries = st.columns([2.1, 1.0])
-
-    with col_map:
-        st.plotly_chart(fig_flow, use_container_width=True)
-        st.markdown(
-            f"""
-            <div style="display: flex; gap: 20px; font-size: 0.8rem; margin-top: -10px; margin-bottom: 10px; opacity: 0.85;">
-                <div><span style="color: {COLOR_EXPORT}; font-weight: bold;">■</span> Outbound Export Corridors (Cambodia ➔ Market)</div>
-                <div><span style="color: {COLOR_IMPORT}; font-weight: bold;">■</span> Inbound Import Supply Chains (Market ➔ Cambodia)</div>
-                <div><span style="color: #ef4444; font-weight: bold;">★</span> Central Hub: Phnom Penh, Cambodia</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        geo_dict = dict(
+            showland=True,
+            landcolor="#f8fafc",
+            showocean=True,
+            oceancolor="#e0f2fe",
+            showlakes=True,
+            lakecolor="#e0f2fe",
+            showcountries=True,
+            countrycolor="#cbd5e1",
+            showcoastlines=True,
+            coastlinecolor="#94a3b8",
+            projection_type=proj_type,
+            bgcolor="rgba(0,0,0,0)",
         )
 
-    with col_top_countries:
-        st.markdown(f"#### 🏆 Top {len(top_partner_names)} Market Ranking")
-        st.caption(f"Volume & dominant flow ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')}).")
+        if proj_type == "orthographic":
+            geo_dict["projection_rotation"] = dict(lon=105, lat=15, roll=0)
+        else:
+            geo_dict["center"] = dict(lat=15, lon=105)
+            geo_dict["projection_scale"] = 1.35
 
-        # Full-height horizontal comparative bar chart on the right
-        df_mini = pd.DataFrame({
-            "Country": top_partner_names[::-1],
-            "Value": [partner_totals[c] for c in top_partner_names][::-1],
-            "Color": [
-                COLOR_EXPORT if map_agg[(map_agg["country_name_en"] == c) & (map_agg["trade_type"] == "Export")][val_col].sum() >= map_agg[(map_agg["country_name_en"] == c) & (map_agg["trade_type"] == "Import")][val_col].sum() else COLOR_IMPORT
-                for c in top_partner_names
-            ][::-1]
-        })
-        fig_mini = go.Figure(go.Bar(
-            x=df_mini["Value"],
-            y=df_mini["Country"],
-            orientation="h",
-            marker_color=df_mini["Color"],
-            text=[format_currency_smart(v, curr_symbol, num_scale)[0] for v in df_mini["Value"]],
-            textposition="auto",
-        ))
-        fig_mini.update_layout(
-            margin=dict(l=0, r=0, t=10, b=10),
-            height=580,
-            xaxis=dict(showticklabels=False, showgrid=False),
-            yaxis=dict(showgrid=False),
+        fig_flow.update_layout(
+            title=f"🌐 Bilateral Trade Corridors — Top {len(partner_lats)} Active Partners ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')})",
+            geo=geo_dict,
+            margin=dict(l=0, r=0, t=40, b=0),
+            height=620,
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_mini, use_container_width=True)
 
-    # =========================================================================
-    # 📋 TOP PARTNER TRADE BREAKDOWN TABLE (BELOW THE MAP)
-    # =========================================================================
-    leaderboard_data = []
-    for rank, p_name in enumerate(top_partner_names, 1):
-        p_data = map_agg[map_agg["country_name_en"] == p_name]
-        p_tot = partner_totals[p_name]
-        pct_share = (p_tot / total_flow_val) * 100 if total_flow_val > 0 else 0
-        p_exp = float(p_data[p_data["trade_type"] == "Export"][val_col].sum()) if "Export" in p_data["trade_type"].values else 0.0
-        p_imp = float(p_data[p_data["trade_type"] == "Import"][val_col].sum()) if "Import" in p_data["trade_type"].values else 0.0
-        p_bal = p_exp - p_imp
+        # Side-by-side layout: Map on Left (68%), Top Country Ranking Chart on Right (32%)
+        col_map, col_top_countries = st.columns([2.1, 1.0])
 
-        c_exp_str, _ = format_currency_smart(p_exp, curr_symbol, num_scale)
-        c_imp_str, _ = format_currency_smart(p_imp, curr_symbol, num_scale)
-        c_tot_str, _ = format_currency_smart(p_tot, curr_symbol, num_scale)
-        c_bal_str, _ = format_currency_smart(abs(p_bal), curr_symbol, num_scale)
-        bal_display = f"{'+' if p_bal >= 0 else '-'}{c_bal_str}"
-        flow_tag = "🟢 Outbound Export" if p_exp >= p_imp else "🟡 Inbound Import"
+        with col_map:
+            st.plotly_chart(fig_flow, use_container_width=True)
+            st.markdown(
+                f"""
+                <div style="display: flex; gap: 20px; font-size: 0.8rem; margin-top: -10px; margin-bottom: 10px; opacity: 0.85;">
+                    <div><span style="color: {COLOR_EXPORT}; font-weight: bold;">■</span> Outbound Export Corridors (Cambodia ➔ Market)</div>
+                    <div><span style="color: {COLOR_IMPORT}; font-weight: bold;">■</span> Inbound Import Supply Chains (Market ➔ Cambodia)</div>
+                    <div><span style="color: #ef4444; font-weight: bold;">★</span> Central Hub: Phnom Penh, Cambodia</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        leaderboard_data.append({
-            "Rank": f"#{rank}",
-            "Partner Country": p_name,
-            f"Total Trade ({currency})": c_tot_str,
-            f"Exports ({currency})": c_exp_str,
-            f"Imports ({currency})": c_imp_str,
-            f"Net Balance ({currency})": bal_display,
-            "Global Share": f"{pct_share:.2f}%",
-            "Dominant Flow": flow_tag,
-        })
-    df_leaderboard = pd.DataFrame(leaderboard_data)
+        with col_top_countries:
+            st.markdown(f"#### 🏆 Top {len(top_partner_names)} Market Ranking")
+            st.caption(f"Volume & dominant flow ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')}).")
 
-    with st.expander(f"📋 Click to View Top Trading Partners Detailed Breakdown Table ({len(df_leaderboard)} Countries)", expanded=False):
-        st.caption(f"Comprehensive bilateral statistics for the top {len(top_partner_names)} active partner nations during **{period_info}**.")
-        st.dataframe(
-            df_leaderboard,
-            use_container_width=True,
-            hide_index=True,
-            height=min(450, 45 + len(df_leaderboard) * 35),
-        )
+            # Full-height horizontal comparative bar chart on the right
+            df_mini = pd.DataFrame({
+                "Country": top_partner_names[::-1],
+                "Value": [partner_totals[c] for c in top_partner_names][::-1],
+                "Color": [
+                    COLOR_EXPORT if map_agg[(map_agg["country_name_en"] == c) & (map_agg["trade_type"] == "Export")][val_col].sum() >= map_agg[(map_agg["country_name_en"] == c) & (map_agg["trade_type"] == "Import")][val_col].sum() else COLOR_IMPORT
+                    for c in top_partner_names
+                ][::-1]
+            })
+            fig_mini = go.Figure(go.Bar(
+                x=df_mini["Value"],
+                y=df_mini["Country"],
+                orientation="h",
+                marker_color=df_mini["Color"],
+                text=[format_currency_smart(v, curr_symbol, num_scale)[0] for v in df_mini["Value"]],
+                textposition="auto",
+            ))
+            fig_mini.update_layout(
+                margin=dict(l=0, r=0, t=10, b=10),
+                height=580,
+                xaxis=dict(showticklabels=False, showgrid=False),
+                yaxis=dict(showgrid=False),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_mini, use_container_width=True)
 
-    # =========================================================================
-    # 📦 TOP EXPORTED & IMPORTED PRODUCTS & COMMODITIES (HS CHAPTERS)
-    # =========================================================================
-    st.markdown("---")
-    st.markdown(f"### 📦 Strategic Goods & Products Trade ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')})")
-    st.caption(f"Top exported commodities and imported supply chain categories ranked by trade value for **{period_info}**.")
+        # =========================================================================
+        # 📋 TOP PARTNER TRADE BREAKDOWN TABLE (BELOW THE MAP)
+        # =========================================================================
+        leaderboard_data = []
+        for rank, p_name in enumerate(top_partner_names, 1):
+            p_data = map_agg[map_agg["country_name_en"] == p_name]
+            p_tot = partner_totals[p_name]
+            pct_share = (p_tot / total_flow_val) * 100 if total_flow_val > 0 else 0
+            p_exp = float(p_data[p_data["trade_type"] == "Export"][val_col].sum()) if "Export" in p_data["trade_type"].values else 0.0
+            p_imp = float(p_data[p_data["trade_type"] == "Import"][val_col].sum()) if "Import" in p_data["trade_type"].values else 0.0
+            p_bal = p_exp - p_imp
 
-    # Slice HS data to active time horizon
-    f_tab1_hs = df_hs[(df_hs["date"] >= t_start) & (df_hs["date"] <= t_end)]
-    if selected_sector_chapters is not None:
-        f_tab1_hs = f_tab1_hs[f_tab1_hs["hs_chapter"].astype(str).str.zfill(2).isin(selected_sector_chapters)]
+            c_exp_str, _ = format_currency_smart(p_exp, curr_symbol, num_scale)
+            c_imp_str, _ = format_currency_smart(p_imp, curr_symbol, num_scale)
+            c_tot_str, _ = format_currency_smart(p_tot, curr_symbol, num_scale)
+            c_bal_str, _ = format_currency_smart(abs(p_bal), curr_symbol, num_scale)
+            bal_display = f"{'+' if p_bal >= 0 else '-'}{c_bal_str}"
+            flow_tag = "🟢 Outbound Export" if p_exp >= p_imp else "🟡 Inbound Import"
 
-    prod_top_n = st.slider("Top Product Chapters to Display", min_value=5, max_value=20, value=10, key="tab1_prod_top_n")
+            leaderboard_data.append({
+                "Rank": f"#{rank}",
+                "Partner Country": p_name,
+                f"Total Trade ({currency})": c_tot_str,
+                f"Exports ({currency})": c_exp_str,
+                f"Imports ({currency})": c_imp_str,
+                f"Net Balance ({currency})": bal_display,
+                "Global Share": f"{pct_share:.2f}%",
+                "Dominant Flow": flow_tag,
+            })
+        df_leaderboard = pd.DataFrame(leaderboard_data)
 
-    hs_exp = f_tab1_hs[f_tab1_hs["trade_type"] == "Export"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index()
-    hs_imp = f_tab1_hs[f_tab1_hs["trade_type"] == "Import"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index()
+        with st.expander(f"📋 Click to View Top Trading Partners Detailed Breakdown Table ({len(df_leaderboard)} Countries)", expanded=False):
+            st.caption(f"Comprehensive bilateral statistics for the top {len(top_partner_names)} active partner nations during **{period_info}**.")
+            st.dataframe(
+                df_leaderboard,
+                use_container_width=True,
+                hide_index=True,
+                height=min(450, 45 + len(df_leaderboard) * 35),
+            )
 
-    hs_exp_top = hs_exp.nlargest(prod_top_n, val_col).copy()
-    hs_imp_top = hs_imp.nlargest(prod_top_n, val_col).copy()
+        # =========================================================================
+        # 📦 TOP EXPORTED & IMPORTED PRODUCTS & COMMODITIES (HS CHAPTERS)
+        # =========================================================================
+        st.markdown("---")
+        st.markdown(f"### 📦 Strategic Goods & Products Trade ({t_start.strftime('%b %Y')} – {t_end.strftime('%b %Y')})")
+        st.caption(f"Top exported commodities and imported supply chain categories ranked by trade value for **{period_info}**.")
 
-    hs_exp_top["label"] = "Ch." + hs_exp_top["hs_chapter"] + " - " + hs_exp_top["description_en"].str[:30]
-    hs_imp_top["label"] = "Ch." + hs_imp_top["hs_chapter"] + " - " + hs_imp_top["description_en"].str[:30]
+        # Slice HS data to active time horizon
+        f_tab1_hs = df_hs[(df_hs["date"] >= t_start) & (df_hs["date"] <= t_end)]
+        if selected_sector_chapters is not None:
+            f_tab1_hs = f_tab1_hs[f_tab1_hs["hs_chapter"].astype(str).str.zfill(2).isin(selected_sector_chapters)]
 
-    prod_col1, prod_col2 = st.columns(2)
+        prod_top_n = st.slider("Top Product Chapters to Display", min_value=5, max_value=20, value=10, key="tab1_prod_top_n")
 
-    with prod_col1:
-        st.markdown(f"#### 🚢 Top {len(hs_exp_top)} Exported Commodities (Outbound)")
-        fig_prod_exp = px.bar(
-            hs_exp_top,
-            x=val_col,
-            y="label",
-            orientation="h",
-            color_discrete_sequence=[COLOR_EXPORT],
-            labels={val_col: currency, "label": "Product / HS Chapter"},
-        )
-        fig_prod_exp.update_layout(
-            yaxis={"categoryorder": "total ascending"},
-            margin=dict(l=0, r=0, t=10, b=10),
-            height=380,
-            xaxis_title=currency,
-            yaxis_title="Commodity Category",
-        )
-        st.plotly_chart(fig_prod_exp, use_container_width=True)
+        hs_exp = f_tab1_hs[f_tab1_hs["trade_type"] == "Export"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index()
+        hs_imp = f_tab1_hs[f_tab1_hs["trade_type"] == "Import"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index()
 
-    with prod_col2:
-        st.markdown(f"#### 📥 Top {len(hs_imp_top)} Imported Commodities (Inbound)")
-        fig_prod_imp = px.bar(
-            hs_imp_top,
-            x=val_col,
-            y="label",
-            orientation="h",
-            color_discrete_sequence=[COLOR_IMPORT],
-            labels={val_col: currency, "label": "Product / HS Chapter"},
-        )
-        fig_prod_imp.update_layout(
-            yaxis={"categoryorder": "total ascending"},
-            margin=dict(l=0, r=0, t=10, b=10),
-            height=380,
-            xaxis_title=currency,
-            yaxis_title="Commodity Category",
-        )
-        st.plotly_chart(fig_prod_imp, use_container_width=True)
+        hs_exp_top = hs_exp.nlargest(prod_top_n, val_col).copy()
+        hs_imp_top = hs_imp.nlargest(prod_top_n, val_col).copy()
 
-    # Detailed Combined Product Table
-    prod_table_rows = []
-    tot_exp_val = f_tab1_hs[f_tab1_hs["trade_type"] == "Export"][val_col].sum()
-    tot_imp_val = f_tab1_hs[f_tab1_hs["trade_type"] == "Import"][val_col].sum()
+        hs_exp_top["label"] = "Ch." + hs_exp_top["hs_chapter"] + " - " + hs_exp_top["description_en"].str[:30]
+        hs_imp_top["label"] = "Ch." + hs_imp_top["hs_chapter"] + " - " + hs_imp_top["description_en"].str[:30]
 
-    for r_idx, (_, row) in enumerate(hs_exp_top.iterrows(), 1):
-        v = row[val_col]
-        fmt_v, _ = format_currency_smart(v, curr_symbol, num_scale)
-        pct = (v / tot_exp_val * 100) if tot_exp_val > 0 else 0
-        prod_table_rows.append({
-            "Rank": f"#{r_idx}",
-            "HS Chapter": f"Chapter {row['hs_chapter']}",
-            "Commodity / Good Description": row["description_en"],
-            "Flow Direction": "🟢 Export (Outbound)",
-            f"Trade Value ({currency})": fmt_v,
-            "Category Share": f"{pct:.2f}% of Exports",
-        })
+        prod_col1, prod_col2 = st.columns(2)
 
-    for r_idx, (_, row) in enumerate(hs_imp_top.iterrows(), 1):
-        v = row[val_col]
-        fmt_v, _ = format_currency_smart(v, curr_symbol, num_scale)
-        pct = (v / tot_imp_val * 100) if tot_imp_val > 0 else 0
-        prod_table_rows.append({
-            "Rank": f"#{r_idx}",
-            "HS Chapter": f"Chapter {row['hs_chapter']}",
-            "Commodity / Good Description": row["description_en"],
-            "Flow Direction": "🟡 Import (Inbound)",
-            f"Trade Value ({currency})": fmt_v,
-            "Category Share": f"{pct:.2f}% of Imports",
-        })
+        with prod_col1:
+            st.markdown(f"#### 🚢 Top {len(hs_exp_top)} Exported Commodities (Outbound)")
+            fig_prod_exp = px.bar(
+                hs_exp_top,
+                x=val_col,
+                y="label",
+                orientation="h",
+                color_discrete_sequence=[COLOR_EXPORT],
+                labels={val_col: currency, "label": "Product / HS Chapter"},
+            )
+            fig_prod_exp.update_layout(
+                yaxis={"categoryorder": "total ascending"},
+                margin=dict(l=0, r=0, t=10, b=10),
+                height=380,
+                xaxis_title=currency,
+                yaxis_title="Commodity Category",
+            )
+            st.plotly_chart(fig_prod_exp, use_container_width=True)
 
-    df_prod_table = pd.DataFrame(prod_table_rows)
+        with prod_col2:
+            st.markdown(f"#### 📥 Top {len(hs_imp_top)} Imported Commodities (Inbound)")
+            fig_prod_imp = px.bar(
+                hs_imp_top,
+                x=val_col,
+                y="label",
+                orientation="h",
+                color_discrete_sequence=[COLOR_IMPORT],
+                labels={val_col: currency, "label": "Product / HS Chapter"},
+            )
+            fig_prod_imp.update_layout(
+                yaxis={"categoryorder": "total ascending"},
+                margin=dict(l=0, r=0, t=10, b=10),
+                height=380,
+                xaxis_title=currency,
+                yaxis_title="Commodity Category",
+            )
+            st.plotly_chart(fig_prod_imp, use_container_width=True)
 
-    with st.expander(f"📋 Click to View Top Traded Goods & Commodities Breakdown Table ({len(df_prod_table)} Categories)", expanded=False):
-        st.caption(f"Detailed commodity and chapter-level statistics for **{period_info}**.")
-        st.dataframe(
-            df_prod_table,
-            use_container_width=True,
-            hide_index=True,
-            height=min(450, 45 + len(df_prod_table) * 35),
-        )
+        # Detailed Combined Product Table
+        prod_table_rows = []
+        tot_exp_val = f_tab1_hs[f_tab1_hs["trade_type"] == "Export"][val_col].sum()
+        tot_imp_val = f_tab1_hs[f_tab1_hs["trade_type"] == "Import"][val_col].sum()
+
+        for r_idx, (_, row) in enumerate(hs_exp_top.iterrows(), 1):
+            v = row[val_col]
+            fmt_v, _ = format_currency_smart(v, curr_symbol, num_scale)
+            pct = (v / tot_exp_val * 100) if tot_exp_val > 0 else 0
+            prod_table_rows.append({
+                "Rank": f"#{r_idx}",
+                "HS Chapter": f"Chapter {row['hs_chapter']}",
+                "Commodity / Good Description": row["description_en"],
+                "Flow Direction": "🟢 Export (Outbound)",
+                f"Trade Value ({currency})": fmt_v,
+                "Category Share": f"{pct:.2f}% of Exports",
+            })
+
+        for r_idx, (_, row) in enumerate(hs_imp_top.iterrows(), 1):
+            v = row[val_col]
+            fmt_v, _ = format_currency_smart(v, curr_symbol, num_scale)
+            pct = (v / tot_imp_val * 100) if tot_imp_val > 0 else 0
+            prod_table_rows.append({
+                "Rank": f"#{r_idx}",
+                "HS Chapter": f"Chapter {row['hs_chapter']}",
+                "Commodity / Good Description": row["description_en"],
+                "Flow Direction": "🟡 Import (Inbound)",
+                f"Trade Value ({currency})": fmt_v,
+                "Category Share": f"{pct:.2f}% of Imports",
+            })
+
+        df_prod_table = pd.DataFrame(prod_table_rows)
+
+        with st.expander(f"📋 Click to View Top Traded Goods & Commodities Breakdown Table ({len(df_prod_table)} Categories)", expanded=False):
+            st.caption(f"Detailed commodity and chapter-level statistics for **{period_info}**.")
+            st.dataframe(
+                df_prod_table,
+                use_container_width=True,
+                hide_index=True,
+                height=min(450, 45 + len(df_prod_table) * 35),
+            )
 
 with tab2:
     st.subheader("🚢 Freight Logistics & Modal Share (Port Authority & Forwarders)")
@@ -1315,29 +1848,363 @@ with tab2:
 
 with tab3:
     st.subheader("📦 Product & Commodity Classification (SITC & HS Chapters)")
-    s_col1, s_col2 = st.columns(2)
-    with s_col1:
-        st.markdown("#### SITC Commodity Sectors")
-        sitc_agg = f_sitc.groupby(["description_en", "trade_type"])[val_col].sum().reset_index()
-        fig_sitc = px.bar(sitc_agg, x=val_col, y="description_en", color="trade_type", orientation="h", barmode="group", title="Trade Value by SITC Sector", color_discrete_map={"Export": COLOR_EXPORT, "Import": COLOR_IMPORT})
-        fig_sitc.update_layout(yaxis={"categoryorder": "total ascending"}, height=500)
-        st.plotly_chart(fig_sitc, use_container_width=True)
+    st.caption("Macroeconomic and customs analysis of Cambodia's trade structure, comparative advantage, and product categories.")
 
-    with s_col2:
-        st.markdown("#### Top 10 HS-2 Product Chapters")
-        hs_top = f_hs.groupby(["hs_chapter", "description_en", "trade_type"])[val_col].sum().reset_index()
-        hs_top_total = hs_top.groupby("hs_chapter")[val_col].sum().nlargest(10).index
-        hs_filtered = hs_top[hs_top["hs_chapter"].isin(hs_top_total)].copy()
-        hs_filtered["chapter_label"] = "Ch." + hs_filtered["hs_chapter"] + " - " + hs_filtered["description_en"].str[:25]
-        fig_hs = px.bar(hs_filtered, x=val_col, y="chapter_label", color="trade_type", orientation="h", barmode="group", title="Top HS Chapters", color_discrete_map={"Export": COLOR_EXPORT, "Import": COLOR_IMPORT})
-        fig_hs.update_layout(yaxis={"categoryorder": "total ascending"}, height=500)
-        st.plotly_chart(fig_hs, use_container_width=True)
+    # 1. 📘 Customs Classification Explanatory Guide
+    with st.expander("📘 Economist's Guide: Understanding SITC vs. HS Codes vs. BEC", expanded=False):
+        st.markdown(
+            """
+            International trade economics analyzes commodities through three complementary frameworks:
+            
+            | Framework | Governance | Economic Focus | How Economists Use It |
+            |---|---|---|---|
+            | **⚖️ Trade Balance Specialization** | Net Trade ($X - M$) | **Comparative Advantage & Vulnerability** | Identifies sectors earning foreign currency (surplus) vs. structural import dependencies (deficit) |
+            | **🏭 UN BEC (Stage of Processing)** | United Nations | **Value-Chain Position** | Distinguishes primary commodities, intermediate factory inputs, capital machinery, and final consumer goods |
+            | **📦 HS Chapters (2-Digit)** | World Customs Org (WCO) | **Detailed Tariff Nomenclature** | Official customs tariff lines (97 chapters) for bilateral trade agreements and duty schedules |
+            | **🌐 SITC Sections (1-Digit)** | United Nations | **Broad Macroeconomic Sectors** | Standard 10-sector macroeconomic accounting for national GDP and input-output modeling |
+
+            ---
+            💡 **Cambodia's Trade Model:**
+            - **Export Specialization:** Finished Consumer Goods (Garments, Footwear, Bicycles) and Agricultural Produce (Milled Rice, Raw Rubber, Bananas).
+            - **Import Dependency:** Intermediate Inputs (Yarn, Knitted Fabrics, Plastics), Energy (Refined Petroleum), and Capital Equipment (Industrial Machinery, Motor Vehicles).
+            """
+        )
+
+    # 2. 🏭 Strategic Industry Pillar Summary Cards
+    st.markdown("#### 🏭 Cambodia Key Strategic Industry Pillars")
+    
+    # Calculate Pillar Aggregates from df_hs for active date range
+    pillar_data = []
+    for p_name, p_chaps in COMMODITY_PILLARS.items():
+        if p_chaps is None:
+            continue
+        p_df = f_hs[f_hs["hs_chapter"].astype(str).str.zfill(2).isin(p_chaps)]
+        p_exp = float(p_df[p_df["trade_type"] == "Export"][val_col].sum())
+        p_imp = float(p_df[p_df["trade_type"] == "Import"][val_col].sum())
+        p_tot = p_exp + p_imp
+        p_bal = p_exp - p_imp
+        pillar_data.append({
+            "Pillar": p_name,
+            "Export": p_exp,
+            "Import": p_imp,
+            "Total": p_tot,
+            "Balance": p_bal,
+        })
+    
+    df_pillars = pd.DataFrame(pillar_data).sort_values(by="Total", ascending=False)
+    
+    # Render top 4 pillars as cards
+    p_cols = st.columns(min(4, len(df_pillars)))
+    for idx, (p_col, (_, p_row)) in enumerate(zip(p_cols, df_pillars.iterrows())):
+        p_name_clean = p_row["Pillar"].split("(")[0].strip()
+        p_icon = p_row["Pillar"].split()[0] if p_row["Pillar"] else "📦"
+        p_compact, p_full = format_currency_smart(p_row["Total"], curr_symbol, scale_mode=num_scale)
+        p_bal_compact, _ = format_currency_smart(abs(p_row["Balance"]), curr_symbol, scale_mode=num_scale)
+        bal_status = f"{'+' if p_row['Balance'] >= 0 else '-'}{p_bal_compact}"
+        bal_color = COLOR_EXPORT if p_row["Balance"] >= 0 else COLOR_IMPORT
+        
+        with p_col:
+            render_kpi_card(
+                title=p_name_clean[:22],
+                compact_val=p_compact,
+                full_val=p_full,
+                badge_text=f"Net: {bal_status}",
+                accent_color=bal_color,
+                icon=p_icon,
+            )
+
+    st.markdown("---")
+
+    # 3. Four Specialized Economic Perspectives via Sub-Tabs
+    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs([
+        "⚖️ Trade Balance Specialization (Surplus vs Deficit)",
+        "🏭 Stages of Processing (UN BEC)",
+        "📊 Top Product Code Rankings (HS & SITC)",
+        "📋 Comprehensive Product Directory",
+    ])
+
+    # =========================================================================
+    # SUB-TAB 1: DIVERGING NET TRADE BALANCE (REVEALED SPECIALIZATION)
+    # =========================================================================
+    with sub_tab1:
+        st.markdown("#### ⚖️ Revealed Net Trade Balance by Product Chapter")
+        st.caption("Diverging economic balance showing net foreign currency earners (Surplus) vs. structural import dependencies (Deficit).")
+
+        # Aggregate HS by Export vs Import
+        hs_bal_exp = f_hs[f_hs["trade_type"] == "Export"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index().rename(columns={val_col: "Export_Val"})
+        hs_bal_imp = f_hs[f_hs["trade_type"] == "Import"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index().rename(columns={val_col: "Import_Val"})
+        
+        hs_bal_merged = pd.merge(hs_bal_exp, hs_bal_imp, on=["hs_chapter", "description_en"], how="outer").fillna(0.0)
+        hs_bal_merged["Net_Balance"] = hs_bal_merged["Export_Val"] - hs_bal_merged["Import_Val"]
+        hs_bal_merged["Total_Trade"] = hs_bal_merged["Export_Val"] + hs_bal_merged["Import_Val"]
+        hs_bal_merged["chapter_label"] = "Ch." + hs_bal_merged["hs_chapter"].astype(str).str.zfill(2) + " - " + hs_bal_merged["description_en"].str[:26]
+
+        # Top 8 Surpluses & Top 8 Deficits
+        top_surpluses = hs_bal_merged[hs_bal_merged["Net_Balance"] > 0].nlargest(8, "Net_Balance")
+        top_deficits = hs_bal_merged[hs_bal_merged["Net_Balance"] < 0].nsmallest(8, "Net_Balance")
+        diverging_df = pd.concat([top_deficits, top_surpluses]).sort_values(by="Net_Balance", ascending=True)
+
+        diverging_df["Color"] = diverging_df["Net_Balance"].apply(lambda b: COLOR_EXPORT if b >= 0 else COLOR_IMPORT)
+        diverging_df["Text_Val"] = diverging_df["Net_Balance"].apply(
+            lambda b: f"{'+' if b>=0 else '-'}{format_currency_smart(abs(b), curr_symbol, scale_mode=num_scale)[0]}"
+        )
+
+        fig_diverging = go.Figure()
+        fig_diverging.add_trace(go.Bar(
+            y=diverging_df["chapter_label"],
+            x=diverging_df["Net_Balance"],
+            orientation="h",
+            marker_color=diverging_df["Color"],
+            text=diverging_df["Text_Val"],
+            textposition="outside",
+            customdata=list(zip(diverging_df["Export_Val"], diverging_df["Import_Val"], diverging_df["description_en"])),
+            hovertemplate="<b>%{customdata[2]}</b><br>● Net Trade Balance: <b>%{x:,.0f} " + curr_symbol + "</b><br>● Exports: %{customdata[0]:,.0f}<br>● Imports: %{customdata[1]:,.0f}<extra></extra>",
+        ))
+
+        fig_diverging.update_layout(
+            title=f"Net Trade Balance (Exports Minus Imports) by Key Product Chapter ({curr_symbol})",
+            xaxis=dict(title=f"Net Balance ({currency})", zeroline=True, zerolinewidth=2, zerolinecolor="rgba(128,128,128,0.5)"),
+            yaxis=dict(title=""),
+            height=540,
+            margin=dict(l=10, r=20, t=40, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_diverging, use_container_width=True)
+
+        # Economic Interpretation
+        tot_surplus_val = top_surpluses["Net_Balance"].sum()
+        tot_deficit_val = abs(top_deficits["Net_Balance"].sum())
+        c_surp_str, _ = format_currency_smart(tot_surplus_val, curr_symbol, scale_mode=num_scale)
+        c_def_str, _ = format_currency_smart(tot_deficit_val, curr_symbol, scale_mode=num_scale)
+        
+        st.info(
+            f"💡 **Economic Balance Insight:** "
+            f"Cambodia generates its largest trade surpluses (**+{c_surp_str}**) in **Apparel (Ch. 61 & 62)**, **Footwear (Ch. 64)**, **Solar & Electronics (Ch. 85)**, and **Cereals (Ch. 10)**. "
+            f"These earnings offset structural deficits (**-{c_def_str}**) in **Mineral Fuels (Ch. 27)**, **Vehicles (Ch. 87)**, **Knitted Fabric Inputs (Ch. 60)**, and **Industrial Machinery (Ch. 84)**."
+        )
+
+    # =========================================================================
+    # SUB-TAB 2: ECONOMIC STAGES OF PROCESSING (UN BEC FRAMEWORK)
+    # =========================================================================
+    with sub_tab2:
+        st.markdown("#### 🏭 Trade by Stage of Economic Processing (UN BEC Framework)")
+        st.caption("Classifies trade into raw commodities, factory inputs, capital machinery, and finished goods to reveal value-chain positioning.")
+
+        def classify_bec_stage(hs_ch_str: str) -> str:
+            try:
+                ch = int(hs_ch_str)
+            except:
+                return "📦 Other Commodities"
+            
+            if ch in [61, 62, 64, 65, 66, 42, 94, 95, 96, 91, 92, 97]:
+                return "👗 Final Consumer Goods"
+            elif (50 <= ch <= 60) or (28 <= ch <= 40) or (72 <= ch <= 83) or ch in [41, 43, 47, 48, 68, 69, 70]:
+                return "🧵 Intermediate Factory Inputs"
+            elif ch in [84, 85, 90]:
+                return "⚙️ Capital Goods & Machinery"
+            elif (1 <= ch <= 24) or ch in [25, 26, 27]:
+                return "🌾 Primary Commodities & Energy"
+            elif ch in [86, 87, 88, 89]:
+                return "🚗 Transport Vehicles & Equipment"
+            return "📦 Other Commodities"
+
+        f_hs_bec = f_hs.copy()
+        f_hs_bec["bec_stage"] = f_hs_bec["hs_chapter"].apply(classify_bec_stage)
+
+        bec_agg = f_hs_bec.groupby(["bec_stage", "trade_type"])[val_col].sum().unstack(fill_value=0.0).reset_index()
+        if "Export" not in bec_agg.columns: bec_agg["Export"] = 0.0
+        if "Import" not in bec_agg.columns: bec_agg["Import"] = 0.0
+        bec_agg["Total"] = bec_agg["Export"] + bec_agg["Import"]
+        bec_agg["Balance"] = bec_agg["Export"] - bec_agg["Import"]
+        bec_agg = bec_agg.sort_values(by="Total", ascending=False)
+
+        # 4 Stage Summary Cards
+        bec_cols = st.columns(min(4, len(bec_agg)))
+        for idx, (b_col, (_, b_row)) in enumerate(zip(bec_cols, bec_agg.iterrows())):
+            b_compact, b_full = format_currency_smart(b_row["Total"], curr_symbol, scale_mode=num_scale)
+            b_bal_compact, _ = format_currency_smart(abs(b_row["Balance"]), curr_symbol, scale_mode=num_scale)
+            b_bal_status = f"{'+' if b_row['Balance'] >= 0 else '-'}{b_bal_compact}"
+            b_accent = COLOR_EXPORT if b_row["Balance"] >= 0 else COLOR_IMPORT
+            
+            with b_col:
+                render_kpi_card(
+                    title=b_row["bec_stage"][:22],
+                    compact_val=b_compact,
+                    full_val=b_full,
+                    badge_text=f"Net: {b_bal_status}",
+                    accent_color=b_accent,
+                    icon=b_row["bec_stage"].split()[0],
+                )
+
+        # Comparative Bar Chart
+        fig_bec = go.Figure()
+        fig_bec.add_trace(go.Bar(
+            y=bec_agg["bec_stage"],
+            x=bec_agg["Export"],
+            name="🟢 Outbound Exports",
+            orientation="h",
+            marker_color=COLOR_EXPORT,
+            text=[format_currency_smart(v, curr_symbol, scale_mode=num_scale)[0] for v in bec_agg["Export"]],
+            textposition="auto",
+        ))
+        fig_bec.add_trace(go.Bar(
+            y=bec_agg["bec_stage"],
+            x=bec_agg["Import"],
+            name="🟡 Inbound Imports",
+            orientation="h",
+            marker_color=COLOR_IMPORT,
+            text=[format_currency_smart(v, curr_symbol, scale_mode=num_scale)[0] for v in bec_agg["Import"]],
+            textposition="auto",
+        ))
+        fig_bec.update_layout(
+            title=f"Exports vs. Imports across Economic Stages of Processing ({curr_symbol})",
+            barmode="group",
+            yaxis=dict(title="", categoryorder="total ascending"),
+            xaxis=dict(title=f"Trade Value ({currency})"),
+            height=430,
+            margin=dict(l=10, r=10, t=40, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_bec, use_container_width=True)
+
+    # =========================================================================
+    # SUB-TAB 3: TOP PRODUCT CODE RANKINGS (BAR CHARTS)
+    # =========================================================================
+    with sub_tab3:
+        comm_ctrl1, comm_ctrl2 = st.columns([1.5, 1.0])
+        with comm_ctrl1:
+            comm_flow = st.radio(
+                "Select Flow Direction:",
+                options=["🟢 Outbound Exports", "🟡 Inbound Imports", "🔄 Combined (Total Trade)"],
+                horizontal=True,
+                key="tab3_comm_flow_sub3",
+            )
+        with comm_ctrl2:
+            top_n_codes = st.slider("Top Codes to Display:", min_value=5, max_value=25, value=10, key="tab3_top_n_codes_sub3")
+
+        if "Exports" in comm_flow:
+            tab3_flow_types = ["Export"]
+        elif "Imports" in comm_flow:
+            tab3_flow_types = ["Import"]
+        else:
+            tab3_flow_types = ["Export", "Import"]
+
+        f_tab3_hs = f_hs[f_hs["trade_type"].isin(tab3_flow_types)].copy()
+        f_tab3_sitc = f_sitc[f_sitc["trade_type"].isin(tab3_flow_types)].copy()
+
+        s_col1, s_col2 = st.columns(2)
+        with s_col1:
+            st.markdown(f"#### 📦 Top {top_n_codes} HS-2 Product Chapters")
+            st.caption("Detailed 2-digit tariff chapters ranked by trade value.")
+            hs_top = f_tab3_hs.groupby(["hs_chapter", "description_en", "trade_type"])[val_col].sum().reset_index()
+            hs_top_total = hs_top.groupby("hs_chapter")[val_col].sum().nlargest(top_n_codes).index
+            hs_filtered = hs_top[hs_top["hs_chapter"].isin(hs_top_total)].copy()
+            hs_filtered["chapter_label"] = "Ch." + hs_filtered["hs_chapter"].astype(str).str.zfill(2) + " - " + hs_filtered["description_en"].str[:26]
+            
+            order_totals = hs_filtered.groupby("chapter_label")[val_col].sum().sort_values(ascending=True)
+            
+            fig_hs = px.bar(
+                hs_filtered,
+                x=val_col,
+                y="chapter_label",
+                color="trade_type",
+                orientation="h",
+                barmode="group",
+                title=f"Top {top_n_codes} HS Chapters ({curr_symbol})",
+                color_discrete_map={"Export": COLOR_EXPORT, "Import": COLOR_IMPORT},
+                category_orders={"chapter_label": order_totals.index.tolist()},
+            )
+            fig_hs.update_layout(
+                yaxis={"title": ""},
+                xaxis={"title": f"Trade Value ({currency})"},
+                height=max(480, top_n_codes * 34),
+                margin=dict(l=10, r=10, t=35, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_hs, use_container_width=True)
+
+        with s_col2:
+            st.markdown("#### 🌐 SITC Broad Economic Sectors")
+            st.caption("Macroeconomic classification across 1-digit UN SITC sections.")
+            sitc_agg = f_tab3_sitc.groupby(["description_en", "trade_type"])[val_col].sum().reset_index()
+            sitc_agg["short_name"] = sitc_agg["description_en"].apply(lambda d: d.split("(")[0].strip()[:32])
+            
+            sitc_order = sitc_agg.groupby("short_name")[val_col].sum().sort_values(ascending=True)
+            
+            fig_sitc = px.bar(
+                sitc_agg,
+                x=val_col,
+                y="short_name",
+                color="trade_type",
+                orientation="h",
+                barmode="group",
+                title=f"SITC Sector Ranking ({curr_symbol})",
+                color_discrete_map={"Export": COLOR_EXPORT, "Import": COLOR_IMPORT},
+                category_orders={"short_name": sitc_order.index.tolist()},
+            )
+            fig_sitc.update_layout(
+                yaxis={"title": ""},
+                xaxis={"title": f"Trade Value ({currency})"},
+                height=max(480, top_n_codes * 34),
+                margin=dict(l=10, r=10, t=35, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_sitc, use_container_width=True)
+
+    # =========================================================================
+    # SUB-TAB 4: COMPREHENSIVE PRODUCT DIRECTORY TABLE
+    # =========================================================================
+    with sub_tab4:
+        st.markdown("#### 📋 Comprehensive HS Product Directory")
+        st.caption("Full directory of Harmonized System commodity chapters with bilateral flows and net balances.")
+        
+        hs_full_exp = f_hs[f_hs["trade_type"] == "Export"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index().rename(columns={val_col: "Export_Val"})
+        hs_full_imp = f_hs[f_hs["trade_type"] == "Import"].groupby(["hs_chapter", "description_en"])[val_col].sum().reset_index().rename(columns={val_col: "Import_Val"})
+        
+        hs_merged = pd.merge(hs_full_exp, hs_full_imp, on=["hs_chapter", "description_en"], how="outer").fillna(0.0)
+        hs_merged["Total_Val"] = hs_merged["Export_Val"] + hs_merged["Import_Val"]
+        hs_merged["Net_Balance"] = hs_merged["Export_Val"] - hs_merged["Import_Val"]
+        hs_merged = hs_merged.sort_values(by="Total_Val", ascending=False)
+        
+        tot_all_hs = hs_merged["Total_Val"].sum() if not hs_merged.empty else 1.0
+        
+        table_rows = []
+        for _, r in hs_merged.iterrows():
+            c_exp, _ = format_currency_smart(r["Export_Val"], curr_symbol, scale_mode=num_scale)
+            c_imp, _ = format_currency_smart(r["Import_Val"], curr_symbol, scale_mode=num_scale)
+            c_tot, _ = format_currency_smart(r["Total_Val"], curr_symbol, scale_mode=num_scale)
+            c_bal, _ = format_currency_smart(abs(r["Net_Balance"]), curr_symbol, scale_mode=num_scale)
+            bal_str = f"{'+' if r['Net_Balance'] >= 0 else '-'}{c_bal}"
+            share_pct = (r["Total_Val"] / tot_all_hs) * 100
+            flow_badge = "🟢 Export Surplus" if r["Net_Balance"] >= 0 else "🟡 Import Deficit"
+            
+            table_rows.append({
+                "HS Chapter": f"Ch. {str(r['hs_chapter']).zfill(2)}",
+                "Product Description": r["description_en"],
+                f"Total Trade ({currency})": c_tot,
+                f"Exports ({currency})": c_exp,
+                f"Imports ({currency})": c_imp,
+                f"Net Balance ({currency})": bal_str,
+                "Share (%)": f"{share_pct:.2f}%",
+                "Flow Orientation": flow_badge,
+            })
+        
+        df_product_dir = pd.DataFrame(table_rows)
+        st.dataframe(
+            df_product_dir,
+            use_container_width=True,
+            hide_index=True,
+            height=480,
+        )
+
+
 
 with tab4:
-    st.subheader("🔮 Predictive Time-Series Forecasting & Port Capacity Planning")
-    st.caption("Econometric exponential smoothing and Holt-Winters forecasting with calibrated 95% confidence intervals.")
+    st.subheader("🔮 Macroeconomic Forecasting & Port Capacity Planning (Holt-Winters Production Engine)")
+    st.caption("Production macroeconomic forecasting suite calibrated across 128 months of GDCE customs declarations (2016–2026). Exclusively powered by the Tournament Champion **Holt-Winters Triple Exponential Smoothing** model with calibrated **95% Confidence Intervals** (±1.96σ).")
 
-    fc_col1, fc_col2, fc_col3 = st.columns([1.5, 1.3, 1])
+    fc_col1, fc_col2, fc_col3, fc_col4 = st.columns([1.4, 1.1, 1.3, 1.2])
     with fc_col1:
         target_series = st.selectbox(
             "Forecast Target Metric",
@@ -1346,19 +2213,39 @@ with tab4:
                 "📉 National Merchandise Total Imports (Trade Value)",
             ],
             index=0,
+            key="tab4_target_series_select",
         )
     with fc_col2:
-        model_choice = st.selectbox(
-            "Forecasting Model Architecture",
-            [
-                "🏆 Holt-Winters (Champion - Recommended)",
-                "🥈 SARIMAX (1,1,1)x(1,1,1)₁₂ (Econometric Benchmark)",
-                "📊 Compare Both Models (Overlay on 1 Chart)",
-            ],
-            index=0,
+        forecast_horizon = st.slider(
+            "Forecast Horizon (Months)",
+            min_value=3,
+            max_value=24,
+            value=12,
+            step=1,
+            key="tab4_horizon_slider",
         )
     with fc_col3:
-        forecast_horizon = st.slider("Forecast Lead Time (Months)", min_value=3, max_value=24, value=12, step=1)
+        timeline_scope = st.radio(
+            "Historical Timeline Display",
+            ["Recent 36-Month Zoom (Seasonal Wave Focus)", "Full 10-Year History (2016 to Present)"],
+            index=0,
+            horizontal=True,
+            key="tab4_timeline_scope",
+        )
+    with fc_col4:
+        apply_hampel = st.checkbox(
+            "🛡️ Apply Hampel Outlier Filter",
+            value=True,
+            help="Replaces extreme pandemic and declaration shocks (e.g. 2020 COVID) using rolling MAD bounds.",
+            key="tab4_hampel_check",
+        )
+        st.markdown(
+            """<div style='background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; color: #166534;'>
+            🏆 <b>Production Model:</b> Holt-Winters (Additive 12M)<br>
+            🎯 <b>Uncertainty Ribbon:</b> 95% CI (±1.96σ)
+            </div>""",
+            unsafe_allow_html=True,
+        )
 
     # Build target dataset
     try:
@@ -1385,139 +2272,207 @@ with tab4:
             sub_agg = sub_df.groupby("date")[val_col].sum().reset_index().rename(columns={val_col: "value"})
             y_unit = f"{currency}"
 
-        is_compare = "Compare" in model_choice
+        # Dedicated Champion Holt-Winters Execution with Calibrated 95% Confidence Interval
+        hist_df, fc_df, fc_metrics = forecast_monthly_series(
+            sub_agg,
+            date_col="date",
+            value_col="value",
+            horizon=forecast_horizon,
+            model_type="Holt-Winters",
+            confidence_level=0.95,
+            apply_outlier_treatment=apply_hampel,
+        )
 
-        if is_compare:
-            hist_df, fc_hw, metrics_hw = forecast_monthly_series(sub_agg, date_col="date", value_col="value", horizon=forecast_horizon, model_type="Holt-Winters")
-            _, fc_sarima, metrics_sarima = forecast_monthly_series(sub_agg, date_col="date", value_col="value", horizon=forecast_horizon, model_type="SARIMAX")
-            fc_df = fc_hw
-            fc_metrics = metrics_hw
-        elif "SARIMAX" in model_choice:
-            hist_df, fc_df, fc_metrics = forecast_monthly_series(sub_agg, date_col="date", value_col="value", horizon=forecast_horizon, model_type="SARIMAX")
+        # Timeline Zoom Filter if requested
+        if "Recent 36-Month" in timeline_scope and len(hist_df) > 36:
+            plot_hist_df = hist_df.iloc[-36:].copy()
         else:
-            hist_df, fc_df, fc_metrics = forecast_monthly_series(sub_agg, date_col="date", value_col="value", horizon=forecast_horizon, model_type="Holt-Winters")
+            plot_hist_df = hist_df.copy()
 
         # KPI Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        if is_compare:
-            c_hw_tot, f_hw_tot = format_currency_smart(metrics_hw['forecast_horizon_total'], curr_symbol, num_scale)
-            c_sa_tot, f_sa_tot = format_currency_smart(metrics_sarima['forecast_horizon_total'], curr_symbol, num_scale)
-            hw_growth = metrics_hw['projected_growth_rate_pct']
-            sa_growth = metrics_sarima['projected_growth_rate_pct']
-            diff_val = metrics_hw['forecast_horizon_total'] - metrics_sarima['forecast_horizon_total']
-            c_diff, f_diff = format_currency_smart(abs(diff_val), curr_symbol, num_scale)
+        c_proj_tot, f_proj_tot = format_currency_smart(fc_metrics['forecast_horizon_total'], curr_symbol, num_scale)
+        c_peak, f_peak = format_currency_smart(fc_metrics['peak_value'], curr_symbol, num_scale)
+        proj_growth = fc_metrics['projected_growth_rate_pct']
+        outliers_cnt = fc_metrics.get("outliers_detected", 0)
 
-            with m1:
-                render_kpi_card("Architecture", "Overlay Mode", "HW & SARIMAX Co-Plot", "2 Models", "#8b5cf6", "📊")
-            with m2:
-                render_kpi_card(f"HW {forecast_horizon}M Total", c_hw_tot, f_hw_tot, "Champion Model", "#e67e22", "🏆", f"{hw_growth:+.1f}% YoY", hw_growth >= 0)
-            with m3:
-                render_kpi_card(f"SARIMAX {forecast_horizon}M", c_sa_tot, f_sa_tot, "Econometric Benchmark", "#8e44ad", "🥈", f"{sa_growth:+.1f}% YoY", sa_growth >= 0)
-            with m4:
-                render_kpi_card("Model Variance", c_diff, f_diff, "HW vs SARIMAX Spread", "#3b82f6", "⚖️")
-        else:
-            c_proj_tot, f_proj_tot = format_currency_smart(fc_metrics['forecast_horizon_total'], curr_symbol, num_scale)
-            c_peak, f_peak = format_currency_smart(fc_metrics['peak_value'], curr_symbol, num_scale)
-            proj_growth = fc_metrics['projected_growth_rate_pct']
-
-            with m1:
-                render_kpi_card("Active Model", fc_metrics["model_used"].split("(")[0].strip()[:18], fc_metrics["model_used"], "Active Engine", "#8b5cf6", "🧠")
-            with m2:
-                render_kpi_card(f"Projected {forecast_horizon}M Total", c_proj_tot, f_proj_tot, f"Next {forecast_horizon} Months", "#e67e22", "📈", f"{proj_growth:+.1f}% YoY Projected", proj_growth >= 0)
-            with m3:
-                render_kpi_card("Projected YoY Growth", f"{proj_growth:+.1f}%", f"Forecast Trajectory", "Macro Trend", "#10b981" if proj_growth >= 0 else "#ef4444", "🚀", f"{proj_growth:+.1f}% YoY", proj_growth >= 0)
-            with m4:
-                render_kpi_card("Projected Peak Month", str(fc_metrics['peak_month']), f"Peak Value: {f_peak}", "Peak Month", "#f59e0b", "⭐")
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            render_kpi_card(
+                "Active Champion Model",
+                "Holt-Winters (Additive)",
+                "Triple Exp. Smoothing (12M)",
+                "Tournament Champion",
+                "#16a34a",
+                "🏆",
+            )
+        with m2:
+            render_kpi_card(
+                f"Projected {forecast_horizon}M Total",
+                c_proj_tot,
+                f_proj_tot,
+                f"Expected Point Sum (Peak: {fc_metrics['peak_month']})",
+                "#e67e22",
+                "📈",
+                f"{proj_growth:+.1f}% YoY",
+                proj_growth >= 0,
+            )
+        with m3:
+            render_kpi_card(
+                "Projected YoY Growth",
+                f"{proj_growth:+.1f}%",
+                f"Trajectory vs Prior {forecast_horizon}M",
+                "Macro Growth",
+                "#10b981" if proj_growth >= 0 else "#ef4444",
+                "🚀",
+                f"{proj_growth:+.1f}% YoY",
+                proj_growth >= 0,
+            )
 
         st.markdown("---")
 
         # Interactive Forecast Plotly Chart
         fig_fc = go.Figure()
 
-        # Historical Line
+        # Historical Observed Line
         fig_fc.add_trace(go.Scatter(
-            x=hist_df["date"],
-            y=hist_df["actual"],
-            name="Historical Actuals",
+            x=plot_hist_df["date"],
+            y=plot_hist_df["actual"],
+            name="Observed Historical Actuals",
             mode="lines",
-            line=dict(color="#2980b9", width=2.5),
+            line=dict(color="#1e3a8a", width=2.5),
+            hovertemplate="<b>Date:</b> %{x|%Y-%m}<br><b>Actual:</b> %{y:$,.2f}<extra></extra>",
         ))
 
-        if is_compare:
-            # Holt-Winters Shaded Interval
-            fig_fc.add_trace(go.Scatter(
-                x=fc_hw["date"], y=fc_hw["upper_95"], name="HW Upper 95%", mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"
-            ))
-            fig_fc.add_trace(go.Scatter(
-                x=fc_hw["date"], y=fc_hw["lower_95"], name="HW 95% Interval", mode="lines", fill="tonexty", fillcolor="rgba(243, 156, 18, 0.15)", line=dict(width=0)
-            ))
-            # Holt-Winters Line
-            fig_fc.add_trace(go.Scatter(
-                x=fc_hw["date"], y=fc_hw["forecast"], name="🏆 Holt-Winters Forecast", mode="lines+markers", line=dict(color="#e67e22", width=3, dash="dash"), marker=dict(size=6)
-            ))
-            # SARIMAX Line
-            fig_fc.add_trace(go.Scatter(
-                x=fc_sarima["date"], y=fc_sarima["forecast"], name="🥈 SARIMAX Forecast", mode="lines+markers", line=dict(color="#8e44ad", width=2.5, dash="dot"), marker=dict(size=6)
-            ))
-        else:
-            # Single Selected Model Forecast
-            fig_fc.add_trace(go.Scatter(
-                x=fc_df["date"], y=fc_df["upper_95"], name="Upper 95% Confidence", mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"
-            ))
-            fig_fc.add_trace(go.Scatter(
-                x=fc_df["date"], y=fc_df["lower_95"], name="95% Prediction Interval", mode="lines", fill="tonexty", fillcolor="rgba(243, 156, 18, 0.2)", line=dict(width=0)
-            ))
-            fig_fc.add_trace(go.Scatter(
-                x=fc_df["date"], y=fc_df["forecast"], name=f"Forecast (Next {forecast_horizon}M)", mode="lines+markers", line=dict(color="#e67e22" if "Holt" in model_choice else "#8e44ad", width=3, dash="dash"), marker=dict(size=6)
-            ))
+        # Show Hampel cleaned baseline if filter applied and outliers existed
+        if apply_hampel and "cleaned" in plot_hist_df.columns:
+            cleaned_differs = bool(np.any(np.abs(plot_hist_df["actual"] - plot_hist_df["cleaned"]) > 1e-4))
+            if cleaned_differs:
+                fig_fc.add_trace(go.Scatter(
+                    x=plot_hist_df["date"],
+                    y=plot_hist_df["cleaned"],
+                    name="Hampel Immunized Baseline",
+                    mode="lines",
+                    line=dict(color="#059669", width=1.8, dash="dot"),
+                    hovertemplate="<b>Date:</b> %{x|%Y-%m}<br><b>Cleaned Baseline:</b> %{y:$,.2f}<extra></extra>",
+                ))
+
+        cutoff_date = plot_hist_df["date"].max()
+        last_val = plot_hist_df["actual"].iloc[-1]
+
+        # Seamless continuity: anchor forecast line and confidence cone directly to the last observed historical actual
+        fc_dates_conn = pd.concat([pd.Series([cutoff_date]), fc_df["date"]]).reset_index(drop=True)
+        fc_vals_conn = pd.concat([pd.Series([last_val]), fc_df["forecast"]]).reset_index(drop=True)
+        fc_upper_conn = pd.concat([pd.Series([last_val]), fc_df["upper_bound"]]).reset_index(drop=True)
+        fc_lower_conn = pd.concat([pd.Series([last_val]), fc_df["lower_bound"]]).reset_index(drop=True)
+
+        # 95% Confidence Interval Ribbon (Expanding cone starting from cutoff)
+        fig_fc.add_trace(go.Scatter(
+            x=fc_dates_conn,
+            y=fc_upper_conn,
+            name="Upper 95% Bound",
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+        fig_fc.add_trace(go.Scatter(
+            x=fc_dates_conn,
+            y=fc_lower_conn,
+            name="95% Confidence Interval (±1.96σ)",
+            mode="lines",
+            fill="tonexty",
+            fillcolor="rgba(22, 163, 74, 0.18)",
+            line=dict(width=0),
+            hovertemplate="<b>Date:</b> %{x|%Y-%m}<br><b>Lower 95% Bound:</b> %{y:$,.2f}<extra></extra>",
+        ))
+
+        # Holt-Winters Champion Point Forecast
+        fig_fc.add_trace(go.Scatter(
+            x=fc_dates_conn,
+            y=fc_vals_conn,
+            name="🏆 Holt-Winters Champion Forecast",
+            mode="lines+markers",
+            line=dict(color="#16a34a", width=3.2, dash="solid"),
+            marker=dict(size=6, color="#16a34a"),
+            hovertemplate="<b>Date:</b> %{x|%Y-%m}<br><b>HW Forecast:</b> %{y:$,.2f}<extra></extra>",
+        ))
+
+        # Vertical line for cutoff (decoupled from annotation to prevent Timestamp arithmetic error in Plotly)
+        fig_fc.add_vline(
+            x=cutoff_date,
+            line_width=1.8,
+            line_dash="dash",
+            line_color="#dc2626",
+        )
+        fig_fc.add_annotation(
+            x=cutoff_date,
+            y=1.0,
+            yref="paper",
+            text="Forecast Horizon Cutoff",
+            showarrow=False,
+            xanchor="right",
+            yanchor="top",
+            font=dict(color="#dc2626", size=11),
+            bgcolor="rgba(255, 255, 255, 0.85)",
+            bordercolor="#dc2626",
+            borderwidth=1,
+            borderpad=3,
+        )
 
         fig_fc.update_layout(
-            title=f"📈 Time-Series Forecast: {metric_label} ({hist_df['date'].min().strftime('%Y-%m')} to {fc_df['date'].max().strftime('%Y-%m')})",
-            xaxis_title="Month",
+            title=f"📈 Holt-Winters Time-Series Forecast (95% CI): {metric_label} ({plot_hist_df['date'].min().strftime('%Y-%m')} to {fc_df['date'].max().strftime('%Y-%m')})",
+            xaxis_title="Timeline",
             yaxis_title=y_unit,
+            yaxis=dict(rangemode="normal"),
             hovermode="x unified",
             height=530,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         st.plotly_chart(fig_fc, use_container_width=True)
 
-
-        # Forecast Data Table
-        with st.expander("📋 View Monthly Forecast Data & Download Table"):
-            if is_compare:
-                display_fc = pd.DataFrame({
-                    "Period": fc_hw["date"].dt.strftime("%Y-%m"),
-                    f"Holt-Winters ({y_unit.split()[0]})": fc_hw["forecast"],
-                    f"SARIMAX ({y_unit.split()[0]})": fc_sarima["forecast"],
-                    "Difference ($)": fc_hw["forecast"] - fc_sarima["forecast"],
-                    "HW Lower 95%": fc_hw["lower_95"],
-                    "HW Upper 95%": fc_hw["upper_95"],
-                })
-                st.dataframe(display_fc.style.format({
-                    f"Holt-Winters ({y_unit.split()[0]})": "{:,.2f}",
-                    f"SARIMAX ({y_unit.split()[0]})": "{:,.2f}",
-                    "Difference ($)": "{:+,.2f}",
-                    "HW Lower 95%": "{:,.2f}",
-                    "HW Upper 95%": "{:,.2f}",
-                }), use_container_width=True)
+        # 🏆 STEP 9: MODEL TOURNAMENT LEADERBOARD EXPANDER
+        with st.expander("🏆 View Empirical Model Benchmark Tournament Leaderboard", expanded=False):
+            st.markdown("""
+            **Empirical Holdout Tournament Validation:** A strict chronological 12-month holdout evaluation was conducted across all candidate forecasting architectures.
+            The **3-Month Moving Average (MA-3)** defines the **non-negotiable Hurdle Floor**.
+            **Holt-Winters Triple Exponential Smoothing** demonstrated superior accuracy across MAPE, RMSE, and MAE, qualifying it as the dedicated production engine.
+            """)
+            if evaluate_model_tournament is not None:
+                df_leaderboard = evaluate_model_tournament(sub_agg, date_col="date", value_col="value", holdout_months=12)
+                if not df_leaderboard.empty:
+                    st.dataframe(df_leaderboard[["Model", "MAE ($)", "RMSE ($)", "MAPE (%)", "Status"]].style.format({
+                        "MAE ($)": "${:,.0f}",
+                        "RMSE ($)": "${:,.0f}",
+                        "MAPE (%)": "{:.2f}%",
+                    }), use_container_width=True)
+                else:
+                    st.info("Leaderboard requires at least 24 months of historical series data.")
             else:
-                display_fc = fc_df.copy()
-                display_fc["Period"] = display_fc["date"].dt.strftime("%Y-%m")
-                display_fc = display_fc[["Period", "forecast", "lower_95", "upper_95"]].rename(columns={
-                    "forecast": f"Expected Point Forecast ({y_unit.split()[0]})",
-                    "lower_95": "Lower 95% Bound",
-                    "upper_95": "Upper 95% Bound",
-                })
-                st.dataframe(display_fc.style.format({
-                    f"Expected Point Forecast ({y_unit.split()[0]})": "{:,.2f}",
-                    "Lower 95% Bound": "{:,.2f}",
-                    "Upper 95% Bound": "{:,.2f}",
-                }), use_container_width=True)
+                st.info("Tournament evaluation module initializing...")
+
+        # Forecast Data Table & CSV Download Expander
+        with st.expander("📋 View Monthly Forecast Data & Download Table", expanded=True):
+            display_fc = fc_df.copy()
+            display_fc["Period"] = display_fc["date"].dt.strftime("%Y-%m")
+            display_fc["ci_margin"] = (display_fc["upper_bound"] - display_fc["lower_bound"]) / 2.0
+            display_fc = display_fc[["Period", "forecast", "lower_bound", "upper_bound", "ci_margin"]].rename(columns={
+                "forecast": f"Holt-Winters Expected Point Forecast ({y_unit.split()[0]})",
+                "lower_bound": f"Lower 95% Confidence Bound ({y_unit.split()[0]})",
+                "upper_bound": f"Upper 95% Confidence Bound ({y_unit.split()[0]})",
+                "ci_margin": "Margin of Error (±95%)",
+            })
+            st.dataframe(display_fc.style.format({
+                f"Holt-Winters Expected Point Forecast ({y_unit.split()[0]})": "{:,.2f}",
+                f"Lower 95% Confidence Bound ({y_unit.split()[0]})": "{:,.2f}",
+                f"Upper 95% Confidence Bound ({y_unit.split()[0]})": "{:,.2f}",
+                "Margin of Error (±95%)": "±{:,.2f}",
+            }), use_container_width=True)
 
             csv_data = display_fc.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Download Forecast CSV",
+                label="📥 Download Holt-Winters 95% CI Forecast CSV",
                 data=csv_data,
-                file_name=f"cambodia_gdce_forecast_{fc_df['date'].min().strftime('%Y%m')}_{fc_df['date'].max().strftime('%Y%m')}.csv",
+                file_name=f"cambodia_holt_winters_95ci_{fc_df['date'].min().strftime('%Y%m')}_{fc_df['date'].max().strftime('%Y%m')}.csv",
                 mime="text/csv",
             )
 

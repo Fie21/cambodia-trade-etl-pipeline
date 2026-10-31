@@ -45,6 +45,30 @@ class TestTimeSeriesForecasting(unittest.TestCase):
         with self.assertRaises(ValueError):
             forecast_monthly_series(short_df, horizon=6)
 
+    def test_hampel_outlier_filtering(self):
+        from src.forecast import apply_hampel_filter
+        s = pd.Series(self.df["value"].values, index=self.df["date"])
+        # Inject extreme shock
+        s.iloc[15] += 500.0
+        cleaned, is_outlier = apply_hampel_filter(s, window=5, n_sigmas=3.0)
+        self.assertTrue(is_outlier.iloc[15])
+        self.assertLess(cleaned.iloc[15], 400.0)
+
+    def test_all_model_families(self):
+        for m_type in ["Holt-Winters", "SARIMAX", "Random Forest", "Gradient Boosting", "3-Month MA", "Seasonal Naive", "Linear Trend"]:
+            hist_df, fc_df, metrics = forecast_monthly_series(self.df, horizon=6, model_type=m_type)
+            self.assertEqual(len(fc_df), 6)
+            self.assertFalse(fc_df["forecast"].isna().any())
+
+    def test_model_tournament_evaluation(self):
+        from src.forecast import evaluate_model_tournament
+        leaderboard = evaluate_model_tournament(self.df, holdout_months=6)
+        self.assertFalse(leaderboard.empty)
+        self.assertIn("Model", leaderboard.columns)
+        self.assertIn("MAPE (%)", leaderboard.columns)
+        self.assertIn("Status", leaderboard.columns)
+
 
 if __name__ == "__main__":
     unittest.main()
+
