@@ -13,8 +13,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from sqlalchemy import create_engine
-
 import importlib.util
+
+st.set_page_config(
+    page_title="Cambodia GDCE International Trade Analytics",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # Ensure project root and src/ are in sys.path regardless of execution working directory
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -81,13 +87,6 @@ except Exception:
     pass
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
-
-st.set_page_config(
-    page_title="Cambodia GDCE International Trade Analytics",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 
 @st.cache_resource
