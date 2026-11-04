@@ -41,14 +41,9 @@ airflow_logs/
 pgdata/
 pgadmin_data/
 
-# Excluded Non-Core Assets & Administrative Docs
+# Excluded Documentation, Notebooks & Administrative Assets
+docs/
 notebooks/
-docs/proposal/
-docs/presentation/
-docs/I4_Internship I_FollowUp/
-docs/I4_Request Defense Approval AMS/
-docs/senoir.pdf
-docs/i4_thesis_report/
 mindmap/
 
 # IDE & Editor configs

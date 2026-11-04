@@ -367,9 +367,6 @@ transport-etl-pipeline/
 │   ├── airflow/                      # Airflow container Dockerfile
 │   ├── pgadmin/                      # Pre-configured pgAdmin servers definition
 │   └── postgres/                     # Postgres database bootstrap scripts
-├── docs/
-│   ├── PROJECT_PROGRESS_REPORT.md    # Master Markdown progress report for supervisor review
-│   └── Project_Progress_Report.xlsx  # 4-sheet formatted Excel progress report
 ├── sql/
 │   └── init_warehouse.sql            # DDL schemas, fact tables & index definitions
 ├── src/
