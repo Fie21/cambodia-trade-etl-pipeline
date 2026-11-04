@@ -1,17 +1,15 @@
 # 🇰🇭 Cambodia GDCE Multi-Pillar Trade & Transport ETL Warehouse
 
+[![Streamlit Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cambodia-trade-etl-pipeline-wv2yqjxzwdyaeyy2fhkvso.streamlit.app/)
 [![Status](https://img.shields.io/badge/Status-Active%20Development-orange?logo=git&logoColor=white)](https://github.com/Fie21/cambodia-trade-etl-pipeline)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Apache Airflow](https://img.shields.io/badge/Apache_Airflow-2.9-017CEE?logo=apacheairflow&logoColor=white)](https://airflow.apache.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.37-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
-> 📊 **Project Overview & Progress**
+> 🚀 **Live Production Dashboard:** [cambodia-trade-etl-pipeline-wv2yqjxzwdyaeyy2fhkvso.streamlit.app](https://cambodia-trade-etl-pipeline-wv2yqjxzwdyaeyy2fhkvso.streamlit.app/)
 >
 > An end-to-end Data Engineering & Business Intelligence platform for Cambodia GDCE International Trade Data. Featuring automated scrapers across 4 statistical pillars, 2-tier PostgreSQL Data Warehouse, Apache Airflow batch scheduling, interactive Streamlit analytics dashboards, and predictive time-series forecasting models.
-> 
-> 📋 **Supervisor Progress Report:** [View Project Progress Report (Markdown)](docs/PROJECT_PROGRESS_REPORT.md) | [Download Excel Report (.xlsx)](docs/Project_Progress_Report.xlsx)
 
 
 A production-grade, containerized Data Engineering and Business Intelligence pipeline that ingests, cleans, warehouses, and visualizes over **10 years of monthly international merchandise trade and freight logistics statistics (2016–2026)** from the official **General Department of Customs and Excise of Cambodia (GDCE)**.
@@ -238,14 +236,20 @@ A comprehensive diagnostic audit on the warehouse confirmed:
 
 ## 📊 Interactive BI & DE Dashboards
 
+> 🌐 **Live Web Application:** Access the deployed executive dashboard online at **[cambodia-trade-etl-pipeline-wv2yqjxzwdyaeyy2fhkvso.streamlit.app](https://cambodia-trade-etl-pipeline-wv2yqjxzwdyaeyy2fhkvso.streamlit.app/)**.
+
 ### 1. Business Analytics Dashboard (`dashboard/app_business.py` - Port `8501`)
-- **Macroeconomic Overview**: Total import/export trade values, monthly trade balance, and historical growth rates.
-- **Freight Logistics & Modal Shifts**: Share of cargo volume across Sea, Road, Air, Inland Waterways, and Rail.
-- **Bilateral Trade Flow**: Top trading partners (USA, China, Vietnam, Thailand, EU) and product breakdowns.
+- **Live Cloud URL**: [https://cambodia-trade-etl-pipeline-wv2yqjxzwdyaeyy2fhkvso.streamlit.app/](https://cambodia-trade-etl-pipeline-wv2yqjxzwdyaeyy2fhkvso.streamlit.app/)
+- **Unified Executive Canvas**: Power BI-style unified view with high-contrast economic balance cards.
+- **3D Interactive World Globe**: Great-circle trade arcs centered on Cambodia showing bilateral export/import flows.
+- **Sector Slicing**: Dynamic industry filtering across Garments, Agriculture, Electronics, Automobile, and Steel.
+- **Econometric Forecasting**: 3- to 24-month Holt-Winters & SARIMAX projections with expanding 95% confidence interval cones.
 
 ### 2. Data Engineering Dashboard (`dashboard/app_data_engineering.py` - Port `8502`)
-- **Pipeline Health Monitor**: Database row counts, table sizing, and recent ETL execution logs.
-- **Quality Assurance KPIs**: Data completeness rates, null checks, and ingestion latency.
+- **Scraping HTTP Health Monitor**: Time-series analysis of 200 OK vs 403, 404, 503 error codes & SLA metrics.
+- **2-Tier Warehouse Storage Footprints**: Live row count audits and relation sizing across `staging` and `warehouse`.
+- **128-Month Data Coverage**: Continuous ingestion continuity tracking from 2016-01 to 2026-08.
+- **Interactive SQL Sanity Tester**: In-browser SQL console with pre-configured schema and duplicate check queries.
 
 ---
 
@@ -256,8 +260,8 @@ A comprehensive diagnostic audit on the warehouse confirmed:
 
 ### 1. Clone & Configure
 ```bash
-git clone https://github.com/<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>.git
-cd <YOUR_REPO_NAME>
+git clone https://github.com/Fie21/cambodia-trade-etl-pipeline.git
+cd cambodia-trade-etl-pipeline
 cp .env.example .env
 ```
 
