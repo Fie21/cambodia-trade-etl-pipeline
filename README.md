@@ -354,9 +354,10 @@ transport-etl-pipeline/
 ├── dags/
 │   └── transport_stats_dag.py        # Airflow 4-pillar DAG with parallel TaskGroups
 ├── dashboard/
-│   ├── app.py                        # Unified Streamlit entrypoint
-│   ├── app_business.py               # Streamlit Business BI application (Port 8501)
-│   ├── app_data_engineering.py       # Streamlit Data Engineering application (Port 8502)
+│   ├── app_business.py               # Streamlit Executive BI Dashboard (Port 8501)
+│   ├── app_data_engineering.py       # Streamlit Data Engineering Observability (Port 8502)
+│   ├── forecast.py                   # Econometric time-series forecasting engine
+│   ├── data/                         # Offline Parquet snapshots for cloud deployment
 │   ├── Dockerfile                    # Dashboard container definition
 │   └── requirements.txt              # Dashboard Python dependencies
 ├── data/
